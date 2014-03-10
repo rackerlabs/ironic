@@ -27,7 +27,7 @@ from sqlalchemy import Boolean, Column, DateTime
 from sqlalchemy import ForeignKey, Integer, Index
 from sqlalchemy import schema, String, Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.types import TypeDecorator, VARCHAR
+from sqlalchemy.types import TypeDecorator, VARCHAR, TEXT
 
 from ironic.openstack.common.db.sqlalchemy import models
 
@@ -80,6 +80,11 @@ class JSONEncodedDict(JsonEncodedType):
 class JSONEncodedList(JsonEncodedType):
     """Represents list serialized as json-encoded string in db."""
     type = list
+
+
+class JSONEncodedLargeDict(JSONEncodedDict):
+    """Represents dict serialized as json-encoded string in db."""
+    impl = TEXT
 
 
 class IronicBase(models.TimestampMixin,
@@ -149,6 +154,7 @@ class Node(Base):
     target_provision_state = Column(String(15), nullable=True)
     provision_updated_at = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
+    instance_info = Column(JSONEncodedLargeDict)
     properties = Column(JSONEncodedDict)
     driver = Column(String(15))
     driver_info = Column(JSONEncodedDict)

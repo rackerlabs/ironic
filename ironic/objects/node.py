@@ -32,6 +32,7 @@ class Node(base.IronicObject):
             'driver': utils.str_or_none,
             'driver_info': utils.dict_or_none,
 
+            'instance_info': utils.dict_or_none,
             'properties': utils.dict_or_none,
             'reservation': utils.str_or_none,
 

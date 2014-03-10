@@ -295,6 +295,9 @@ class Node(base.APIBase):
     console_enabled = types.boolean
     "Indicates whether the console access is enabled or disabled on the node."
 
+    instance_info = {wtypes.text: types.json_type}
+    "This node's instance info."
+
     driver = wsme.wsattr(wtypes.text, mandatory=True)
     "The driver responsible for controlling the node"
 
