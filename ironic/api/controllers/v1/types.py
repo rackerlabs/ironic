@@ -15,6 +15,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import six
 import wsme
 from wsme import types as wtypes
 
@@ -173,3 +174,6 @@ class MultiType(wtypes.UserType):
             raise ValueError(
                      _("Wrong type. Expected '%(type)s', got '%(value)s'")
                      % {'type': self.types, 'value': type(value)})
+
+
+json_type = MultiType(list, dict, six.integer_types, wtypes.text)
