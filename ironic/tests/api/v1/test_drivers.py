@@ -13,8 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import mock
 from testtools.matchers import HasLength
 
+from ironic.conductor import rpcapi
 from ironic.tests.api import base
 
 
@@ -64,5 +66,28 @@ class TestListDrivers(base.FunctionalTest):
         self.validate_link(data['links'][1]['href'])
 
     def test_drivers_get_one_not_found(self):
-        response = self.get_json('/drivers/' + self.d1, expect_errors=True)
+        response = self.get_json('/drivers/%s' % self.d1, expect_errors=True)
+        self.assertEqual(404, response.status_int)
+
+    def test_driver_vendor_passthru_ok(self):
+        self.register_fake_conductors()
+        with mock.patch.object(rpcapi.ConductorAPI,
+                               'driver_vendor_passthru') \
+                                as driver_vendor_passthru:
+            driver_vendor_passthru.return_value = {
+                'return_key': 'return_value',
+            }
+            response = self.post_json(
+                '/drivers/%s/vendor_passthru/do_test' % self.d1,
+                {'test_key': 'test_value'})
+            self.assertEqual(200, response.status_int)
+            self.assertEqual(driver_vendor_passthru.return_value,
+                             response.json)
+
+    def test_driver_vendor_passthru_not_found(self):
+        response = self.post_json(
+            '/drivers/%s/vendor_passthru/do_test' % self.d1,
+            {'test_key': 'test_value'},
+            expect_errors=True)
+
         self.assertEqual(404, response.status_int)

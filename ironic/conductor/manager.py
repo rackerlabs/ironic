@@ -133,8 +133,8 @@ class ConductorManager(service.PeriodicService):
         # extension manager, when the service starts.
         # TODO(deva): Enable re-loading of the DriverFactory to load new
         #             extensions without restarting the whole service.
-        df = driver_factory.DriverFactory()
-        self.drivers = df.names
+        self.driver_factory = driver_factory.DriverFactory()
+        self.drivers = self.driver_factory.names
         """List of driver names which this conductor supports."""
 
         try:
@@ -299,6 +299,43 @@ class ConductorManager(service.PeriodicService):
             with excutils.save_and_reraise_exception():
                 # Release node lock if error occurred.
                 task.release_resources()
+
+    @messaging.client_exceptions(exception.InvalidParameterValue,
+                                 exception.UnsupportedDriverExtension)
+    def driver_vendor_passthru(self, context, driver_name, driver_method,
+                                  info):
+        """RPC method which synchronously handles driver-level vendor passthru
+        calls. These calls don't require a node UUID and are executed on a
+        random conductor with the specified driver.
+
+        :param context: an admin context.
+        :param driver_name: name of the driver on which to call the method.
+        :param driver_method: name of the vendor method, for use by the driver.
+        :param info: data to pass through to the driver.
+        :raises: InvalidParameterValue if supplied info is not valid.
+        :raises: UnsupportedDriverExtension if current driver does not have
+                 vendor interface, if the vendor interface does not impelement
+                 driver-level vendor passthru or if the passthru method is
+                 unsupported.
+
+        """
+        # Any locking in a top-level vendor action will need to be done by the
+        # implementation, as there is little we could reasonably lock on here.
+        LOG.debug(_("RPC driver_vendor_passthru for driver %s.")
+                   % driver_name)
+        try:
+            driver = self.driver_factory[driver_name].obj
+        except KeyError:
+            raise exception.DriverNotFound(driver_name=driver_name)
+
+        if not getattr(driver, 'vendor', None):
+            raise exception.UnsupportedDriverExtension(
+                driver=driver_name,
+                extension='vendor interface')
+
+        return driver.vendor.driver_vendor_passthru(context,
+                                                    method=driver_method,
+                                                    **info)
 
     @messaging.client_exceptions(exception.NoFreeConductorWorker,
                                  exception.NodeLocked,
