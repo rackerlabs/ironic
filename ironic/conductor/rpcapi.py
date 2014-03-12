@@ -18,6 +18,8 @@
 Client side of the conductor RPC API.
 """
 
+import random
+
 from oslo.config import cfg
 
 from ironic.common import exception
@@ -98,6 +100,22 @@ class ConductorAPI(ironic.openstack.common.rpc.proxy.RpcProxy):
                         'driver %s.') % node.driver)
             raise exception.NoValidHost(reason=reason)
 
+    def get_random_topic_for_driver(self, driver_name):
+        """Get an RPC topic which will route messages to a randomly selected
+        conductor which supports the specified driver.
+
+        :param driver_name: the name of the driver to route to.
+        :returns: an RPC topic string.
+        :raises: DriverNotFound
+
+        """
+        try:
+            hash_ring = self.hash_rings[driver_name]
+            host = random.choice(hash_ring.hosts)
+            return self.topic + "." + host
+        except KeyError:
+            raise exception.DriverNotFound(driver_name=driver_name)
+
     def update_node(self, context, node_obj, topic=None):
         """Synchronously, have a conductor update the node's information.
 
@@ -160,6 +178,28 @@ class ConductorAPI(ironic.openstack.common.rpc.proxy.RpcProxy):
         return self.call(context,
                          self.make_msg('vendor_passthru',
                                        node_id=node_id,
+                                       driver_method=driver_method,
+                                       info=info),
+                         topic=topic)
+
+    def driver_vendor_passthru(self, context, driver_name, driver_method, info,
+                        topic=None):
+        """Pass vendor-specific calls which don't specifiy a node to a driver.
+
+        :param context: request context.
+        :param driver_name: name of the driver on which to call the method.
+        :param driver_method: name of the vendor method, for use by the driver.
+        :param info: data to pass through to the driver.
+        :param topic: RPC topic. Defaults to self.topic.
+        :raises: InvalidParameterValue for parameter errors.
+        :raises: UnsupportedDriverExtension for unsupported extensions.
+
+        """
+        topic = topic or self.topic
+
+        return self.call(context,
+                         self.make_msg('driver_vendor_passthru',
+                                       driver_name=driver_name,
                                        driver_method=driver_method,
                                        info=info),
                          topic=topic)
