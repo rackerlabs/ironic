@@ -28,7 +28,7 @@ def _raise_unsupported_error(method=None):
 class MixinVendorInterface(base.VendorInterface):
     """Wrapper around multiple VendorInterfaces."""
 
-    def __init__(self, mapping):
+    def __init__(self, mapping, driver_passthru_mapping=None):
         """Wrapper around multiple VendorInterfaces.
 
         :param mapping: dict of {'method': interface} specifying how to combine
@@ -36,6 +36,7 @@ class MixinVendorInterface(base.VendorInterface):
 
         """
         self.mapping = mapping
+        self.driver_level_mapping = driver_passthru_mapping or {}
 
     def _map(self, **kwargs):
         method = kwargs.get('method')
@@ -64,6 +65,21 @@ class MixinVendorInterface(base.VendorInterface):
         """
         route = self._map(**kwargs)
         return route.vendor_passthru(task, node, **kwargs)
+
+    def driver_vendor_passthru(self, task, method, **kwargs):
+        """Call driver_vendor_passthru on a mapped interface based on the
+        specified method.
+
+        Returns or raises according to the requested driver_vendor_passthru
+
+        :raises: UnsupportedDriverExtension if 'method' cannot be mapped to
+                 a supported interface.
+        """
+        iface = self.driver_level_mapping.get(method)
+        if iface is None:
+            _raise_unsupported_error(method)
+
+        return iface.driver_vendor_passthru(task, method, **kwargs)
 
 
 def get_node_mac_addresses(task, node):
