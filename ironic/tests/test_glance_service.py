@@ -16,6 +16,7 @@
 
 import datetime
 import filecmp
+import mock
 import os
 import tempfile
 import testtools
@@ -611,6 +612,100 @@ def _create_failing_glance_client(info):
             return {}
 
     return MyGlanceStubClient()
+
+
+class TestGlanceSwiftTempURL(base.TestCase):
+    def setUp(self):
+        super(TestGlanceSwiftTempURL, self).setUp()
+        client = stubs.StubGlanceClient()
+        self.context = context.RequestContext(auth_token=True)
+        self.context.user_id = 'fake'
+        self.context.project_id = 'fake'
+        self.service = service.Service(client, 2, self.context)
+
+        self.config(swift_base_url='localhost:6000', group='glance')
+        self.config(swift_api_version='v1', group='glance')
+        self.fake_image = {
+            'image_id': '757274c4-2856-4bd2-bb20-9a4a231e187b'
+        }
+
+        try:
+            self.config(auth_strategy='keystone', group='glance')
+        except Exception:
+            opts = [
+                cfg.StrOpt('auth_strategy', default='keystone'),
+            ]
+            CONF.register_opts(opts)
+
+    @mock.patch('time.time')
+    def test_swift_temp_url(self, time_mock):
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        self.config(swift_temp_url_methods=['GET', 'HEAD', 'PUT', 'POST',
+                                            'DELETE'], group='glance')
+        self.config(swift_backend_container='fake_container', group='glance')
+        self.config(swift_base_url='http://fake-swift.localhost:6000',
+                    group='glance')
+
+        self.service._validate_temp_url_config = mock.Mock()
+        self.service._get_location = mock.Mock()
+        self.service._get_location.return_value = 'http://fake_location.com'
+        self.service._get_temp_url_filename = mock.Mock()
+        self.service._get_temp_url_filename.return_value = \
+            '757274c4-2856-4bd2-bb20-9a4a231e187b'
+        time_mock.return_value = 1395077070.842472
+        temp_url = self.service.swift_temp_url(image_id=self.fake_image,
+                                               duration=30)
+        self.assertEqual('http://fake-swift.localhost:6000/v1/fake_container/'
+                         '757274c4-2856-4bd2-bb20-9a4a231e187b?temp_url_sig='
+                         '5cd576bd404b193f554da98711e6915003dabe0b&'
+                         'temp_url_expires=1395077100',
+                         temp_url)
+
+    def test_swift_temp_url_image_not_found(self):
+        self.service._validate_temp_url_config = mock.Mock()
+        self.service._validate_temp_url_config.return_value = None
+        self.service._get_location = mock.Mock()
+        self.service._get_location.side_effect = exception.ImageNotFound(
+            'image not found')
+        self.assertRaises(
+            exception.ImageNotFound,
+            self.service.swift_temp_url,
+            image_id=self.fake_image,
+            duration=30
+        )
+
+    def test_get_temp_url_filename(self):
+        url = 'https://swift.example.com:9292/container/filename'
+        self.assertEqual('filename', self.service._get_temp_url_filename(url))
+
+    def test_validate_temp_url_config(self):
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        self.config(swift_temp_url_methods=['GET', 'HEAD', 'PUT', 'POST',
+                                            'DELETE'], group='glance')
+        self.config(swift_base_url='http://fake-swift.localhost:6000',
+                    group='glance')
+
+        self.service._validate_temp_url_config()
+
+    def test_validation_temp_url_config_exception(self):
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        self.config(swift_temp_url_duration=30, group='glance')
+        self.config(swift_temp_url_methods=[], group='glance')
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+        self.config(swift_temp_url_methods=['PATCH'], group='glance')
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+        self.config(swift_temp_url_methods=['GET'], group='glance')
+        self.config(swift_temp_url_duration=None, group='glance')
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
 
 
 class TestGlanceUrl(base.TestCase):
