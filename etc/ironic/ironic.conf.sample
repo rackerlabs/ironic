@@ -730,6 +730,38 @@
 # value)
 #allowed_direct_url_schemes=
 
+# The secret token given to Swift to allow temporary URL
+# downloads. (string value)
+#swift_temp_url_key=<None>
+
+# A list of HTTP methods allowed for the temporary URL in
+# Swift. Must be one of ["GET", "HEAD", "PUT", "POST",
+# "DELETE"]. (list value)
+#swift_temp_url_methods=GET
+
+# The length of time in seconds that the temporary URL will be
+# valid for. (integer value)
+#swift_temp_url_duration=3600
+
+# Override the scheme for the Swift server. Should be either
+# "http" or "https". (string value)
+#swift_scheme=<None>
+
+# Override the base URL for the Swift server (without scheme).
+# Should not have a trailing "/" or API version. For example,
+# use "swift.example.com". (string value)
+#swift_endpoint_url=<None>
+
+# Override the the string between host and Swift container
+# name, including version string. Should not include leading
+# or trailing slashes. For example,
+# "v1/TENANT_NAME_TENANT_ID". (string value)
+#swift_path=<None>
+
+# Override the name of the Swift container in which Glance
+# stores its images. (string value)
+#swift_backend_container=<None>
+
 
 #
 # Options defined in ironic.common.image_service
@@ -798,6 +830,11 @@
 
 # Complete public Identity API endpoint (string value)
 #auth_uri=<None>
+
+# Complete admin Identity API endpoint. This should specify
+# the unversioned root endpoint eg. https://localhost:35357/
+# (string value)
+#identity_uri=<None>
 
 # Complete admin Identity API endpoint. This should specify
 # the unversioned root endpoint eg. https://localhost:35357/
