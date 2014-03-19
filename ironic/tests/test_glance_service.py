@@ -18,7 +18,10 @@ import datetime
 import filecmp
 import os
 import tempfile
+
+import mock
 import testtools
+
 
 from ironic.common import exception
 from ironic.common.glance_service import base_image_service
@@ -611,6 +614,144 @@ def _create_failing_glance_client(info):
             return {}
 
     return MyGlanceStubClient()
+
+
+class TestGlanceSwiftTempURL(base.TestCase):
+    def setUp(self):
+        super(TestGlanceSwiftTempURL, self).setUp()
+        client = stubs.StubGlanceClient()
+        self.context = context.RequestContext()
+        self.service = service.Service(client, 2, self.context)
+
+        self.fake_image = {
+            'properties': {
+                'image_id': '757274c4-2856-4bd2-bb20-9a4a231e187b',
+                'direct_url': 'swift+https://fakeuser:fakepassword'
+                              '@swift.example.com/v2.0/fake_container/75727'
+                              '4c4-2856-4bd2-bb20-9a4a231e187b'
+            }
+        }
+
+    @mock.patch('time.time')
+    def test_swift_temp_url(self, time_mock):
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        # Test upper and lower case method names
+        self.config(swift_temp_url_methods=['get', 'HEAD', 'PUT', 'POST',
+                                            'DELETE'], group='glance')
+
+        self.service._validate_temp_url_config = mock.Mock()
+        self.service._get_location = mock.Mock()
+        self.service._get_location.return_value = self.fake_image[
+            'properties']['direct_url']
+
+        time_mock.return_value = 1395077070.842472
+        temp_url = self.service.swift_temp_url(image_info=self.fake_image,
+                                               duration=30)
+        self.assertEqual('swift+https://swift.example.com/v2.0/fake_container'
+                         '/757274c4-2856-4bd2-bb20-9a4a231e187b?temp_url_sig='
+                         '0f6e33d047b615e23b7d29503502f605c93f3647&temp_'
+                         'url_expires=1395077100',
+                         temp_url)
+
+    @mock.patch('time.time')
+    def test_swift_temp_url_no_direct_url(self, time_mock):
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        # Test upper and lower case method names
+        self.config(swift_temp_url_methods=['get', 'HEAD', 'PUT', 'POST',
+                                            'DELETE'], group='glance')
+        self.config(swift_scheme='swift+https', group='glance')
+        self.config(swift_endpoint_url='swift.example.com', group='glance')
+        self.config(swift_path='v2.0', group='glance')
+        self.config(swift_backend_container='fake_container',
+                    group='glance')
+
+        self.service._validate_temp_url_config = mock.Mock()
+        self.service._get_location = mock.Mock()
+        self.service._get_location.return_value = self.fake_image[
+            'properties']['direct_url']
+
+        time_mock.return_value = 1395077070.842472
+        temp_url = self.service.swift_temp_url(image_info=self.fake_image,
+                                               duration=30)
+        self.assertEqual('swift+https://swift.example.com/v2.0/fake_container'
+                         '/757274c4-2856-4bd2-bb20-9a4a231e187b?temp_url_sig='
+                         '0f6e33d047b615e23b7d29503502f605c93f3647&temp_'
+                         'url_expires=1395077100',
+                         temp_url)
+
+    def test_validate_temp_url_config(self):
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        self.config(swift_temp_url_methods=['GET', 'HEAD', 'PUT', 'POST',
+                                            'DELETE'], group='glance')
+
+        self.service._validate_temp_url_config()
+
+    def test_validation_temp_url_config_exception(self):
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+
+        self.config(swift_temp_url_key='correcthorsebatterystaple',
+                    group='glance')
+        self.config(swift_temp_url_methods=[], group='glance')
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+        self.config(swift_temp_url_methods=['PATCH'], group='glance')
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service._validate_temp_url_config)
+
+    def test_swift_temp_url_bad_duration(self):
+        self.config(swift_temp_url_duration=None, group='glance')
+        self.service._validate_temp_url_config = mock.Mock()
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.service.swift_temp_url,
+                          image_info=self.fake_image)
+
+    def test_swift_url_fragments(self):
+        # Test without config overrides
+        url = 'swift+http://user:password@example.com/v2.0/container/' \
+              '757274c4-2856-4bd2-bb20-9a4a231e187b'
+        expected = {
+            'scheme': 'swift+http',
+            'host': 'example.com',
+            'path': 'v2.0',
+            'container': 'container',
+            'object_id': '757274c4-2856-4bd2-bb20-9a4a231e187b'
+        }
+        actual = self.service._swift_url_fragments(url)
+        self.assertEqual(expected, actual)
+
+        # Override host
+        self.config(swift_endpoint_url='swift.example.com', group='glance')
+        expected['host'] = 'swift.example.com'
+        actual = self.service._swift_url_fragments(url)
+        self.assertEqual(expected, actual)
+
+        # Override API version
+        self.config(swift_path='v1', group='glance')
+        expected['path'] = 'v1'
+        actual = self.service._swift_url_fragments(url)
+        self.assertEqual(expected, actual)
+
+        # Override Container
+        self.config(swift_backend_container='new_container', group='glance')
+        expected['container'] = 'new_container'
+        actual = self.service._swift_url_fragments(url)
+        self.assertEqual(expected, actual)
+
+    def test_swift_url_fragments_bad_object(self):
+        url = 'swift+http://user:password@example.com/v2.0/container/not-uuid'
+        self.assertRaises(exception.ImageUnacceptable,
+                          self.service._swift_url_fragments,
+                          url)
+
+    def test_swift_url_fragments_bad_url(self):
+        url = 'swift+http://user:password@example.com/container/id'
+        self.assertRaises(exception.ImageUnacceptable,
+                          self.service._swift_url_fragments,
+                          url)
 
 
 class TestGlanceUrl(base.TestCase):
