@@ -688,6 +688,37 @@
 # value)
 #allowed_direct_url_schemes=
 
+# The secret token given to Swift to allow temporary URL
+# downloads. (string value)
+#swift_temp_url_key=<None>
+
+# A list of HTTP methods allowed for the temporary URL in
+# Swift. (list value)
+#swift_temp_url_methods=GET
+
+# The length of time in seconds that the temporary URL will be
+# valid for. (integer value)
+#swift_temp_url_duration=3600
+
+# Override the scheme for the Swift server. Should beeither
+# "http" or "https". (string value)
+#swift_scheme=<None>
+
+# Override the base URL for the Swift server (without scheme).
+# Should not have a trailing "/". or API version.e.g.
+# swift.example.com (string value)
+#swift_endpoint_url=<None>
+
+# Override the the string between host and container,
+# including version string. Should not include leadingor
+# trailing slashes. e.g. "v1/TENANT_NAME_TENANT_ID" (string
+# value)
+#swift_path=<None>
+
+# Override the name of the Swift container Glance stores its
+# images in. (string value)
+#swift_backend_container=<None>
+
 
 #
 # Options defined in ironic.common.image_service
