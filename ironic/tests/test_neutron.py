@@ -69,7 +69,7 @@ class TestNeutron(base.TestCase):
                     'ca_cert': 'test-file',
                     'token': token,
                     'endpoint_url': 'test-url',
-                    'auth_strategy': None}
+                    'auth_strategy': 'noauth'}
 
         with mock.patch.object(client.Client, "__init__") as mock_client_init:
             mock_client_init.return_value = None
@@ -86,7 +86,8 @@ class TestNeutron(base.TestCase):
                     'username': 'test-admin-user',
                     'tenant_name': 'test-admin-tenant',
                     'password': 'test-admin-password',
-                    'auth_url': 'test-auth-uri'}
+                    'auth_url': 'test-auth-uri',
+                    'auth_strategy': 'keystone'}
 
         with mock.patch.object(client.Client, "__init__") as mock_client_init:
             mock_client_init.return_value = None
