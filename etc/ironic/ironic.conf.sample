@@ -440,6 +440,19 @@
 #matchmaker_heartbeat_ttl=600
 
 
+[agent_driver]
+
+#
+# Options defined in ironic.drivers.modules.agent
+#
+
+# The length of time in seconds until the driver will consider
+# the agent down. The agent will attempt to contact Ironic at
+# some set fraction of this time (defaulting to 2/3 the max
+# time).Defaults to 5 minutes. (integer value)
+#heartbeat_timeout=300
+
+
 [api]
 
 #
@@ -528,7 +541,7 @@
 # Deprecated group/name - [DEFAULT]/sql_connection
 # Deprecated group/name - [DATABASE]/sql_connection
 # Deprecated group/name - [sql]/connection
-#connection=<None>
+#connection=sqlite:///$state_path/ironic.sqlite
 
 # The SQL mode to be used for MySQL sessions (default is
 # empty, meaning do not override any server-side SQL mode
