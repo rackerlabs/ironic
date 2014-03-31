@@ -20,6 +20,10 @@
 A driver wrapping the Ironic API, such that Nova may provision
 bare metal resources.
 """
+import base64
+import gzip
+import os
+import tempfile
 
 from ironicclient import exc as ironic_exception
 from oslo.config import cfg
@@ -27,6 +31,7 @@ from oslo.config import cfg
 from ironic.nova.virt.ironic import client_wrapper
 from ironic.nova.virt.ironic import ironic_states
 from ironic.nova.virt.ironic import patcher
+from nova.api.metadata import base as instance_metadata
 from nova import context as nova_context
 from nova.compute import power_state
 from nova.compute import task_states
@@ -38,6 +43,7 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import loopingcall
+from nova.virt import configdrive
 from nova.virt import driver as virt_driver
 from nova.virt import firewall
 
@@ -403,6 +409,14 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         flavor = flavor_obj.Flavor.get_by_id(context,
                                              instance['instance_type_id'])
+
+        # Generate a config drive
+        if 'agent' in node.driver:
+            instance.configdrive = self.generate_configdrive(instance,
+                                                             node,
+                                                             network_info,
+                                                             admin_password,
+                                                             injected_files)
         self._add_driver_fields(node, instance, image_meta, flavor)
 
         #validate we ready to do the deploy
@@ -505,7 +519,8 @@ class IronicDriver(virt_driver.ComputeDriver):
         if node.provision_state in (ironic_states.ACTIVE,
                                     ironic_states.DEPLOYFAIL,
                                     ironic_states.ERROR,
-                                    ironic_states.DEPLOYWAIT):
+                                    ironic_states.DEPLOYWAIT,
+                                    ironic_states.DECOMMISSIONING):
             self._unprovision(icli, instance, node)
 
         self._cleanup_deploy(node, instance, network_info)
@@ -679,3 +694,51 @@ class IronicDriver(virt_driver.ComputeDriver):
         timer = loopingcall.FixedIntervalLoopingCall(self._wait_for_active,
                                                      icli, instance)
         timer.start(interval=CONF.ironic.api_retry_interval).wait()
+
+    def generate_configdrive(self, instance, node, network_info,
+                             admin_password=None, files=None):
+        """Generate a config drive. Returns path to temp file with config
+        drive in it.
+
+        Shamelessly adapted from https://github.com/openstack/nova/blob/
+        # master/nova/virt/xenapi/vm_utils.py#L1204-L1213
+
+        :param instance: Instance passed to spawn from Nova.
+        :param node: Node object retrieved from Ironic.
+        :param network_info: Network info to set on node via configdrive, such
+        as static addresses. Should be passed in from Nova.
+        :param admin_password: Password to set on node via configdrive. Should
+        be passed in from Nova.
+        :param files: Path to files to be added to the configdrive. Should
+        be passed in from Nova.
+
+        """
+        extra_md = {}
+        if admin_password:
+            extra_md['admin_pass'] = admin_password
+        inst_md = instance_metadata.InstanceMetadata(
+            instance,
+            content=files, extra_md=extra_md,
+            network_info=network_info)
+
+        with tempfile.NamedTemporaryFile() as uncompressed:
+            with tempfile.NamedTemporaryFile() as compressed:
+
+                with configdrive.ConfigDriveBuilder(
+                        instance_md=inst_md) as cdb:
+                    cdb.make_drive(uncompressed.name)
+
+                # Compress file
+                uncompressed.seek(0)
+                g = gzip.GzipFile(fileobj=compressed, mode='wb')
+                g.writelines(uncompressed.readlines())
+                g.close()
+
+                #TODO(JoshNang) add option to upload to swift. For now,
+                # base64 encode and store in DB field.
+                compressed.seek(0)
+                encoded_configdrive = base64.b64encode(compressed.read())
+
+                # Close the files to ensure immediate deletion
+
+        return encoded_configdrive
