@@ -440,6 +440,19 @@
 #matchmaker_heartbeat_ttl=600
 
 
+[agent_driver]
+
+#
+# Options defined in ironic.drivers.modules.agent
+#
+
+# The length of time in seconds until the driver will consider
+# the agent down. The agent will attempt to contact Ironic at
+# some set fraction of this time (defaulting to 2/3 the max
+# time).Defaults to 5 minutes. (integer value)
+#heartbeat_timeout=300
+
+
 [api]
 
 #
