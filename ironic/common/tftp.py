@@ -50,7 +50,7 @@ CONF.register_opts(tftp_opts, group='tftp')
 LOG = logging.getLogger(__name__)
 
 
-def _create_pxe_config(task, node, pxe_options):
+def create_pxe_config(task, node, pxe_options, pxe_config_template):
     """Generate pxe configuration file and link mac ports to it for
     tftp booting.
     """
@@ -59,16 +59,16 @@ def _create_pxe_config(task, node, pxe_options):
     fileutils.ensure_tree(os.path.join(CONF.tftp.tftp_root,
                                        'pxelinux.cfg'))
 
-    pxe_config_file_path = _get_pxe_config_file_path(node.uuid)
-    pxe_config = _build_pxe_config(node, pxe_options)
+    pxe_config_file_path = get_pxe_config_file_path(node.uuid)
+    pxe_config = build_pxe_config(node, pxe_options, pxe_config_template)
     utils.write_to_file(pxe_config_file_path, pxe_config)
     for port in driver_utils.get_node_mac_addresses(task, node):
-        mac_path = _get_pxe_mac_path(port)
+        mac_path = get_pxe_mac_path(port)
         utils.unlink_without_raise(mac_path)
         utils.create_link_without_raise(pxe_config_file_path, mac_path)
 
 
-def _build_pxe_config(node, pxe_options, pxe_config_template):
+def build_pxe_config(node, pxe_options, pxe_config_template):
     """Build the PXE config file for a node
 
     This method builds the PXE boot configuration file for a node,
@@ -86,7 +86,7 @@ def _build_pxe_config(node, pxe_options, pxe_config_template):
                             'ROOT': '{{ ROOT }}'})
 
 
-def _get_pxe_mac_path(mac):
+def get_pxe_mac_path(mac):
     """Convert a MAC address into a PXE config file name.
 
     :param mac: A mac address string in the format xx:xx:xx:xx:xx:xx.
@@ -99,20 +99,20 @@ def _get_pxe_mac_path(mac):
         )
 
 
-def _get_pxe_config_file_path(node_uuid):
+def get_pxe_config_file_path(node_uuid):
     """Generate the path for an instances PXE config file."""
     return os.path.join(CONF.tftp.tftp_root, node_uuid, 'config')
 
 
-def _get_pxe_bootfile_name():
+def get_pxe_bootfile_name():
     """Returns the pxe_bootfile_name option."""
     return CONF.tftp.pxe_bootfile_name
 
 
-def _dhcp_options_for_instance():
+def dhcp_options_for_instance():
     """Retrives the DHCP PXE boot options."""
     return [{'opt_name': 'bootfile-name',
-             'opt_value': _get_pxe_bootfile_name()},
+             'opt_value': get_pxe_bootfile_name()},
             {'opt_name': 'server-ip-address',
              'opt_value': CONF.tftp.tftp_server},
             {'opt_name': 'tftp-server',
@@ -120,10 +120,10 @@ def _dhcp_options_for_instance():
             ]
 
 
-def _update_neutron(task, node):
+def update_neutron(task, node):
     """Send or update the DHCP BOOT options to Neutron for this node."""
-    options = _dhcp_options_for_instance()
-    vifs = neutron._get_node_vif_ids(task)
+    options = dhcp_options_for_instance()
+    vifs = neutron.get_node_vif_ids(task)
     if not vifs:
         LOG.warning(_("No VIFs found for node %(node)s when attempting to "
                       "update Neutron DHCP BOOT options."),

@@ -107,7 +107,7 @@ class NeutronAPI(object):
             raise exception.FailedToUpdateMacOnPort(port_id=port_id)
 
 
-def _get_node_vif_ids(task):
+def get_node_vif_ids(task):
     """Get all Neutron VIF ids for a node.
        This function does not handle multi node operations.
 

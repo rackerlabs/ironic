@@ -45,19 +45,19 @@ class TestNetworkUtils(db_base.DbTestCase):
         n = db_utils.get_test_node(**kwargs)
         return self.dbapi.create_node(n)
 
-    def test__build_pxe_config(self):
+    def test_build_pxe_config(self):
         pass
 
     def test__get_pxe_mac_path(self):
         mac = '00:11:22:33:44:55:66'
         self.assertEqual('/tftpboot/pxelinux.cfg/01-00-11-22-33-44-55-66',
-                         tftp._get_pxe_mac_path(mac))
+                         tftp.get_pxe_mac_path(mac))
 
     def test__get_pxe_config_file_path(self):
         self.assertEqual(os.path.join(CONF.tftp.tftp_root,
                                       self.node.uuid,
                                       'config'),
-                         tftp._get_pxe_config_file_path(self.node.uuid))
+                         tftp.get_pxe_config_file_path(self.node.uuid))
 
     def test__dhcp_options_for_instance(self):
         self.config(pxe_bootfile_name='test_pxe_bootfile', group='tftp')
@@ -69,32 +69,32 @@ class TestNetworkUtils(db_base.DbTestCase):
                          {'opt_name': 'tftp-server',
                           'opt_value': '192.0.2.1'}
                          ]
-        self.assertEqual(expected_info, tftp._dhcp_options_for_instance())
+        self.assertEqual(expected_info, tftp.dhcp_options_for_instance())
 
     def test__update_neutron(self):
-        opts = tftp._dhcp_options_for_instance()
-        with mock.patch.object(neutron, '_get_node_vif_ids') as mock_gnvi:
+        opts = tftp.dhcp_options_for_instance()
+        with mock.patch.object(neutron, 'get_node_vif_ids') as mock_gnvi:
             mock_gnvi.return_value = {'port-uuid': 'vif-uuid'}
             with mock.patch.object(neutron.NeutronAPI,
                                    'update_port_dhcp_opts') as mock_updo:
                 with task_manager.acquire(self.context,
                                           self.node.uuid) as task:
-                    tftp._update_neutron(task, self.node)
+                    tftp.update_neutron(task, self.node)
                 mock_updo.assertCalleOnceWith('vif-uuid', opts)
 
     def test__update_neutron_no_vif_data(self):
-        with mock.patch.object(neutron, '_get_node_vif_ids') as mock_gnvi:
+        with mock.patch.object(neutron, 'get_node_vif_ids') as mock_gnvi:
             mock_gnvi.return_value = {}
             with mock.patch.object(neutron.NeutronAPI,
                                    '__init__') as mock_init:
                 with task_manager.acquire(self.context,
                                           self.node.uuid) as task:
-                    tftp._update_neutron(task, self.node)
+                    tftp.update_neutron(task, self.node)
                 mock_init.assert_not_called()
 
     def test__update_neutron_some_failures(self):
         # confirm update is called twice, one fails, but no exception raised
-        with mock.patch.object(neutron, '_get_node_vif_ids') as mock_gnvi:
+        with mock.patch.object(neutron, 'get_node_vif_ids') as mock_gnvi:
             mock_gnvi.return_value = {'p1': 'v1', 'p2': 'v2'}
             with mock.patch.object(neutron.NeutronAPI,
                                    'update_port_dhcp_opts') as mock_updo:
@@ -102,12 +102,12 @@ class TestNetworkUtils(db_base.DbTestCase):
                 mock_updo.side_effect = [None, exc]
                 with task_manager.acquire(self.context,
                                           self.node.uuid) as task:
-                    tftp._update_neutron(task, self.node)
+                    tftp.update_neutron(task, self.node)
                 self.assertEqual(2, mock_updo.call_count)
 
     def test__update_neutron_fails(self):
         # confirm update is called twice, both fail, and exception is raised
-        with mock.patch.object(neutron, '_get_node_vif_ids') as mock_gnvi:
+        with mock.patch.object(neutron, 'get_node_vif_ids') as mock_gnvi:
             mock_gnvi.return_value = {'p1': 'v1', 'p2': 'v2'}
             with mock.patch.object(neutron.NeutronAPI,
                                    'update_port_dhcp_opts') as mock_updo:
@@ -116,6 +116,6 @@ class TestNetworkUtils(db_base.DbTestCase):
                 with task_manager.acquire(self.context,
                                           self.node.uuid) as task:
                     self.assertRaises(exception.FailedToUpdateDHCPOptOnPort,
-                                      tftp._update_neutron,
+                                      tftp.update_neutron,
                                       task, self.node)
                 self.assertEqual(2, mock_updo.call_count)

@@ -146,7 +146,7 @@ def _parse_driver_info(node):
     return d_info
 
 
-def _build_pxe_config_options(node, pxe_info, ctx):
+def build_pxe_config_options(node, pxe_info, ctx):
     """Build the PXE config file for a node
 
     This method builds the PXE boot configuration file for a node,
@@ -172,19 +172,19 @@ def _build_pxe_config_options(node, pxe_info, ctx):
     node.save(ctx)
 
     pxe_options = {
-            'deployment_id': node['uuid'],
-            'deployment_key': deploy_key,
-            'deployment_iscsi_iqn': "iqn-%s" % node.uuid,
-            'deployment_aki_path': pxe_info['deploy_kernel'][1],
-            'deployment_ari_path': pxe_info['deploy_ramdisk'][1],
-            'aki_path': pxe_info['kernel'][1],
-            'ari_path': pxe_info['ramdisk'][1],
-            'ironic_api_url': ironic_api,
-            'pxe_append_params': CONF.pxe.pxe_append_params,
-        }
-    return tftp._build_pxe_config(node,
-                                     pxe_options,
-                                     CONF.pxe.pxe_config_template)
+        'deployment_id': node['uuid'],
+        'deployment_key': deploy_key,
+        'deployment_iscsi_iqn': "iqn-%s" % node.uuid,
+        'deployment_aki_path': pxe_info['deploy_kernel'][1],
+        'deployment_ari_path': pxe_info['deploy_ramdisk'][1],
+        'aki_path': pxe_info['kernel'][1],
+        'ari_path': pxe_info['ramdisk'][1],
+        'ironic_api_url': ironic_api,
+        'pxe_append_params': CONF.pxe.pxe_append_params,
+    }
+    return tftp.build_pxe_config(node,
+                                  pxe_options,
+                                  CONF.pxe.pxe_config_template)
 
 
 def _get_image_dir_path(node_uuid):
@@ -388,7 +388,7 @@ class PXEDeploy(base.DeployInterface):
         # TODO(yuriyz): more secure way needed for pass auth token
         #               to deploy ramdisk
         _create_token_file(task, node)
-        tftp._update_neutron(task, node)
+        tftp.update_neutron(task, node)
         manager_utils.node_set_boot_device(task, 'pxe', persistent=True)
         manager_utils.node_power_action(task, node, states.REBOOT)
 
@@ -422,8 +422,8 @@ class PXEDeploy(base.DeployInterface):
         """
         # TODO(deva): optimize this if rerun on existing files
         pxe_info = _get_tftp_image_info(node, task.context)
-        pxe_options = _build_pxe_config_options(node, pxe_info, task.context)
-        tftp._create_pxe_config(task, node, pxe_options)
+        pxe_options = build_pxe_config_options(node, pxe_info, task.context)
+        tftp.create_pxe_config(task, node, pxe_options)
         _cache_images(node, pxe_info, task.context)
 
     def clean_up(self, task, node):
@@ -444,10 +444,10 @@ class PXEDeploy(base.DeployInterface):
             utils.unlink_without_raise(path)
         PXEImageCache(CONF.pxe.tftp_master_path).clean_up()
 
-        utils.unlink_without_raise(tftp._get_pxe_config_file_path(
+        utils.unlink_without_raise(tftp.get_pxe_config_file_path(
                 node.uuid))
         for port in driver_utils.get_node_mac_addresses(task, node):
-            mac_path = tftp._get_pxe_mac_path(port)
+            mac_path = tftp.get_pxe_mac_path(port)
             utils.unlink_without_raise(mac_path)
 
         utils.rmtree_without_raise(
@@ -457,7 +457,7 @@ class PXEDeploy(base.DeployInterface):
         _destroy_token_file(node)
 
     def take_over(self, task, node):
-        tftp._update_neutron(task, node)
+        tftp.update_neutron(task, node)
 
 
 class VendorPassthru(base.VendorInterface):
@@ -477,7 +477,7 @@ class VendorPassthru(base.VendorInterface):
                   'lun': kwargs.get('lun', '1'),
                   'image_path': _get_image_file_path(node.uuid),
                   'pxe_config_path':
-                      tftp._get_pxe_config_file_path(node.uuid),
+                      tftp.get_pxe_config_file_path(node.uuid),
                   'root_mb': 1024 * int(d_info['root_gb']),
                   'swap_mb': int(d_info['swap_mb']),
                   'ephemeral_mb': 1024 * int(d_info['ephemeral_gb']),

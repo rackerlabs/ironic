@@ -181,11 +181,6 @@ class PXEValidateParametersTestCase(base.TestCase):
         data = pxe._parse_driver_info(node)
         self.assertEqual(1, data.get('swap_mb'))
 
-    def test__get_pxe_mac_path(self):
-        mac = '00:11:22:33:44:55:66'
-        self.assertEqual('/tftpboot/pxelinux.cfg/01-00-11-22-33-44-55-66',
-                         pxe._get_pxe_mac_path(mac))
-
 
 class PXEPrivateMethodsTestCase(db_base.DbTestCase):
 
@@ -247,8 +242,8 @@ class PXEPrivateMethodsTestCase(db_base.DbTestCase):
             self.assertEqual('instance_ramdisk_uuid',
                              self.node.driver_info.get('pxe_ramdisk'))
 
-    @mock.patch('ironic.common.tftp._build_pxe_config')
-    def test__build_pxe_config_options(self, build_pxe_mock):
+    @mock.patch('ironic.common.tftp.build_pxe_config')
+    def testbuild_pxe_config_options(self, build_pxe_mock):
         self.config(pxe_append_params='test_param', group='pxe')
         # NOTE: right '/' should be removed from url string
         self.config(api_url='http://192.168.122.184:6385/', group='conductor')
@@ -293,7 +288,7 @@ class PXEPrivateMethodsTestCase(db_base.DbTestCase):
                                                   self.node.uuid,
                                                   'ramdisk')]
                       }
-            pxe._build_pxe_config_options(self.node,
+            pxe.build_pxe_config_options(self.node,
                                           image_info,
                                           self.context)
             build_pxe_mock.assert_called_once_with(self.node,
@@ -472,8 +467,8 @@ class PXEDriverTestCase(db_base.DbTestCase):
 
     @mock.patch('ironic.drivers.modules.pxe._get_tftp_image_info')
     @mock.patch('ironic.drivers.modules.pxe._cache_images')
-    @mock.patch('ironic.drivers.modules.pxe._build_pxe_config_options')
-    @mock.patch('ironic.common.tftp._create_pxe_config')
+    @mock.patch('ironic.drivers.modules.pxe.build_pxe_config_options')
+    @mock.patch('ironic.common.tftp.create_pxe_config')
     def test_prepare(self, create_pxe_config_mock, pxe_config_mock,
                      cache_images_mock, get_tftp_image_info_mock):
         get_tftp_image_info_mock.return_value = None
@@ -493,7 +488,7 @@ class PXEDriverTestCase(db_base.DbTestCase):
 
     def test_deploy(self):
         with mock.patch.object(tftp,
-                               '_update_neutron') as update_neutron_mock:
+                               'update_neutron') as update_neutron_mock:
             with mock.patch.object(manager_utils,
                     'node_power_action') as node_power_mock:
                 with mock.patch.object(manager_utils,
@@ -546,7 +541,7 @@ class PXEDriverTestCase(db_base.DbTestCase):
 
     def test_take_over(self):
         with mock.patch.object(tftp,
-                               '_update_neutron') as update_neutron_mock:
+                               'update_neutron') as update_neutron_mock:
             with task_manager.acquire(
                     self.context, self.node.uuid, shared=True) as task:
                 task.driver.deploy.take_over(task, self.node)
@@ -647,8 +642,8 @@ class PXEDriverTestCase(db_base.DbTestCase):
 
     def clean_up_config(self, master=None):
         temp_dir = tempfile.mkdtemp()
-        self.config(tftp_root=temp_dir, group='pxe')
-        tftp_master_dir = os.path.join(CONF.pxe.tftp_root,
+        self.config(tftp_root=temp_dir, group='tftp')
+        tftp_master_dir = os.path.join(CONF.tftp.tftp_root,
                                        'tftp_master')
         self.config(tftp_master_path=tftp_master_dir, group='pxe')
         os.makedirs(tftp_master_dir)
