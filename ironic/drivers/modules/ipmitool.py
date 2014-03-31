@@ -382,6 +382,24 @@ class VendorPassthru(base.VendorInterface):
         except Exception:
             raise exception.IPMIFailure(cmd=cmd)
 
+    def _send_raw_bytes(self, task, raw_bytes):
+        """Send raw bytes to the BMC. Bytes should be a string of bytes."""
+        driver_info = _parse_driver_info(task.node)
+        cmd = 'raw %s' % raw_bytes
+        try:
+            out, err = _exec_ipmitool(driver_info, cmd)
+        except Exception:
+            raise exception.IPMIFailure(cmd=cmd)
+
+    def _set_bootparam(self, task, flag):
+        """Set a boot flag, such as 'set bootflag force_disk' on the BMC."""
+        driver_info = _parse_driver_info(task.node)
+        cmd = 'chassis bootparam %s' % flag
+        try:
+            out, err = _exec_ipmitool(driver_info, cmd)
+        except Exception:
+            raise exception.IPMIFailure(cmd=cmd)
+
     def validate(self, task, **kwargs):
         method = kwargs['method']
         if method == 'set_boot_device':

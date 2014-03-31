@@ -186,8 +186,10 @@ def is_image_available(context, image):
     This check is needed in case Nova and Glance are deployed
     without authentication turned on.
     """
-    # The presence of an auth token implies this is an authenticated
-    # request and we need not handle the noauth use-case.
+    # The presence of an auth token implies this is an authenticated request
+    # TODO(JoshNang) break this into its own patch later.
+    if CONF.glance.auth_strategy == 'noauth':
+        return True
     if hasattr(context, 'auth_token') and context.auth_token:
         return True
     if image.is_public or context.is_admin:
