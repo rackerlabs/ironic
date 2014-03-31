@@ -437,6 +437,71 @@
 #run_external_periodic_tasks=true
 
 
+[agent]
+
+#
+# Options defined in ironic.drivers.modules.agent
+#
+
+# The length of time in seconds until the driver will consider
+# the agent down. The agent will attempt to contact Ironic at
+# some set fraction of this time (defaulting to 2/3 the max
+# time).Defaults to 5 minutes. (integer value)
+#heartbeat_timeout=300
+
+# Template file for PXE configuration. (string value)
+#pxe_config_template=$pybasedir/drivers/modules/agent_config.template
+
+# The service responsible for providing DHCP and TFTP to
+# booting agents. If set to "neutron", it expects a TFTP
+# server local to each conductor where TFTP configs can be
+# written out. If set to "external", it expects a pre-
+# configured DHCP and TFTP service (such as a DHCP server
+# which determines what TFTP image which should be booted.)
+# (string value)
+#dhcp_provider=neutron
+
+# The path to the kernel image used to boot the agent. This
+# will be put into the DHCP file if dhcp_provider is set to
+# "neutron". (string value)
+#agent_kernel_path=<None>
+
+# The path to the kernel image used to boot the agent. This
+# will be put into the DHCP file if dhcp_provider is set to
+# "neutron". (string value)
+#agent_initrd_path=<None>
+
+# Additional append parameters for agent boot. (string value)
+#agent_kernel_args=nofb nomodeset vga=normal
+
+# The address that will be sent to the agent which the agent
+# will send its initial lookup call to. Defaults to my_ip.
+# (string value)
+#ironic_api_url=$my_ip
+
+# The amount of time in seconds to wait for an agent to boot
+# when using neutron as the dhcp_provider. (integer value)
+#agent_boot_max_wait=300
+
+
+#
+# Options defined in ironic.drivers.modules.agent_client
+#
+
+# API version to communicate with the ramdisk agent over.
+# (string value)
+#agent_api_version=v1
+
+
+#
+# Options defined in ironic.drivers.modules.agent_utils
+#
+
+# The uuid of the provisioning network, where the agent lives.
+# (string value)
+#provisioning_network_uuid=<None>
+
+
 [api]
 
 #
