@@ -59,6 +59,8 @@ DELETING = 'deleting'
 DELETED = 'deleted'
 ERROR = 'error'
 REBUILD = 'rebuild'
+DECOMMISSIONING = 'decommissioning'
+DECOMMISSIONED = 'decommissioned'
 
 POWER_ON = 'power on'
 POWER_OFF = 'power off'

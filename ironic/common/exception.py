@@ -245,6 +245,15 @@ class NodeInWrongPowerState(InvalidState):
                 "%(node)s is in power state %(pstate)s.")
 
 
+class NoValidPortmaps(IronicException):
+    message = _("Failed to find valid portmaps to configure network %(vif)s "
+                "for %(node)s")
+
+
+class NetworkError(IronicException):
+    message = _("A networking error occurred for node %(node)s")
+
+
 class ChassisNotEmpty(Invalid):
     message = _("Cannot complete the requested action because chassis "
                 "%(chassis)s contains nodes.")
