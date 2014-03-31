@@ -952,3 +952,85 @@ class IronicDriverTestCase(test.NoDBTestCase):
 
         # assert port.update() was not called
         assert not mock_update.called
+
+    @mock.patch.object(FAKE_CLIENT.node, 'update')
+    def test__add_agent_driver_fields(self, mock_update):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        instance_uuid = uuidutils.generate_uuid()
+        expected_body = [{
+            'path': '/instance_info/image_source',
+            'value': u'test',
+            'op': 'add'
+        }, {
+            'path': '/instance_info/configdrive',
+            'value': 'fake-drive',
+            'op': 'add'
+        }, {
+            'path': '/instance_uuid',
+            'value': instance_uuid,
+            'op': 'add'
+        }]
+        node = ironic_utils.get_test_node(uuid=node_uuid,
+                                          instance_uuid=instance_uuid,
+                                          driver='agent_fake')
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid)
+        instance.configdrive = 'fake-drive'
+        self.driver._add_driver_fields(node, instance, {'id': 'test'}, None)
+        mock_update.assert_called_once_with(node_uuid, expected_body)
+
+    @mock.patch.object(FAKE_CLIENT.node, 'update')
+    def test__cleanup_agent_deploy(self, mock_update):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        expected_body = [
+            {'path': '/instance_info/image_source',
+             'op': 'remove'},
+            {'path': '/instance_info/configdrive',
+             'op': 'remove'},
+            {'path': '/instance_uuid',
+             'op': 'remove'}
+        ]
+
+        instance_uuid = uuidutils.generate_uuid()
+        instance_info = {'image_source': 'test',
+                         'configdrive': 'test'}
+        node = ironic_utils.get_test_node(uuid=node_uuid,
+                                          instance_uuid=instance_uuid,
+                                          driver='agent_fake',
+                                          instance_info=instance_info)
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid)
+        self.driver._cleanup_deploy(node, instance, {})
+        mock_update.assert_called_once_with(node_uuid, expected_body)
+
+    @mock.patch('base64.b64encode')
+    @mock.patch('nova.api.metadata.base.InstanceMetadata')
+    @mock.patch('nova.virt.configdrive.ConfigDriveBuilder')
+    def test_generate_configdrive(self, config_mock, instance_mock, b64_mock):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        node = ironic_utils.get_test_node(uuid=node_uuid)
+
+        make_drive_mock = mock.MagicMock()
+        config_mock.__enter__.return_value = make_drive_mock
+
+        instance_mock.return_value = 'instance_mock'
+        b64_mock.return_value = 'b64encoded'
+
+        instance = fake_instance.fake_instance_obj(self.ctx, node=node_uuid)
+        network_info = utils.get_test_network_info()
+        admin_password = 'hunter2'
+
+        expected_md = {'admin_pass': admin_password}
+
+        encoded = self.driver.generate_configdrive(
+            instance=instance, node=node, network_info=network_info,
+            admin_password=admin_password)
+
+        instance_mock.assert_called_once_with(instance,
+                                              content=None,
+                                              extra_md=expected_md,
+                                              network_info=network_info)
+
+        config_mock.assert_called_once_with(instance_md='instance_mock')
+
+        self.assertEqual('b64encoded', encoded)
