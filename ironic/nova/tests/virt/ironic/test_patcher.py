@@ -101,3 +101,27 @@ class IronicDriverFieldsTestCase(test.NoDBTestCase):
                     {'path': '/driver_info/pxe_swap_mb',
                      'op': 'remove'}]
         self.assertEqual(sorted(expected), sorted(patch))
+
+    def test_agent_get_deploy_patch(self):
+        node = ironic_utils.get_test_node(driver='agent_fake')
+        instance = fake_instance.fake_instance_obj(self.ctx, node=node.uuid)
+        instance.configdrive = 'test'
+        expected = [{'path': '/instance_info/configdrive',
+                     'value': 'test',
+                     'op': 'add'},
+                    {'path': '/instance_info/image_source',
+                     'value': self.image_meta['id'],
+                     'op': 'add'}]
+        patch = patcher.create(node).get_deploy_patch(
+                instance, self.image_meta, self.flavor)
+        self.assertEqual(sorted(expected), sorted(patch))
+
+    def test_agent_get_cleanup_patch(self):
+        instance_info = {'image_source': 'fake-image-id'}
+        node = ironic_utils.get_test_node(driver='agent_fake',
+                                          instance_info=instance_info)
+        instance = fake_instance.fake_instance_obj(self.ctx, node=node.uuid)
+        patch = patcher.create(node).get_cleanup_patch(instance, None)
+        expected = [{'path': '/instance_info/image_source',
+                     'op': 'remove'}]
+        self.assertEqual(sorted(expected), sorted(patch))
