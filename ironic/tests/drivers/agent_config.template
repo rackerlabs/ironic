@@ -1,0 +1,5 @@
+default deploy
+
+label deploy
+kernel {{ agent_options.deployment_aki_path }}
+append initrd={{ pxe_options.deployment_ari_path }} root=squashfs: {{ agent_options.kernel_command_args }} state=tmpfs: ipa-api-url={{ agent_options.ipa_api_url }} ipa-advertise-host={{ agent_options.ipa_api_url }}
