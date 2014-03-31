@@ -382,6 +382,47 @@ class VendorPassthru(base.VendorInterface):
         except Exception:
             raise exception.IPMIFailure(cmd=cmd)
 
+    # TODO(JoshNang) split these into separate patch
+    def _send_raw_bytes(self, task, raw_bytes):
+        """Send raw bytes to the BMC. Bytes should be a string of bytes."""
+        LOG.debug("Sending raw bytes %(bytes)s to node %(node)s",
+                  {"bytes": raw_bytes,
+                   "node": task.node})
+        driver_info = _parse_driver_info(task.node)
+        cmd = 'raw %s' % raw_bytes
+        try:
+            out, err = _exec_ipmitool(driver_info, cmd)
+        except Exception:
+            raise exception.IPMIFailure(cmd=cmd)
+
+    def _set_bootparam(self, task, flag):
+        """Set a boot flag, such as 'set bootflag force_disk' on the BMC."""
+        LOG.debug("Setting bootparam %(flag)s on node %(node)s",
+                  {"flag": flag,
+                   "node": task.node})
+        driver_info = _parse_driver_info(task.node)
+        cmd = 'chassis bootparam %s' % flag
+        try:
+            out, err = _exec_ipmitool(driver_info, cmd)
+        except Exception:
+            raise exception.IPMIFailure(cmd=cmd)
+
+    def _bmc_reset(self, task, warm=True):
+        """Set a boot flag, such as 'set bootflag force_disk' on the BMC."""
+        if warm:
+            warm_param = "warm"
+        else:
+            warm_param = "cold"
+        LOG.debug("Doing %(warm)s BMC reset on node %(node)s",
+                  {"warm": warm_param,
+                   "node": task.node})
+        driver_info = _parse_driver_info(task.node)
+        cmd = 'bmc reset %s' % warm_param
+        try:
+            out, err = _exec_ipmitool(driver_info, cmd)
+        except Exception:
+            raise exception.IPMIFailure(cmd=cmd)
+
     def validate(self, task, **kwargs):
         method = kwargs['method']
         if method == 'set_boot_device':
