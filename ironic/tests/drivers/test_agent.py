@@ -1,0 +1,281 @@
+# Copyright 2014 Rackspace, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import mock
+from sqlalchemy.orm import exc as db_exc
+
+from ironic.common import exception
+from ironic.common import states
+from ironic.drivers.modules import agent
+from ironic.openstack.common import test
+
+
+class FakeNode(object):
+    provision_state = states.NOSTATE
+    target_provision_state = states.NOSTATE
+
+    def __init__(self, driver_info=None, instance_info=None, uuid=None):
+        if driver_info:
+            self.driver_info = driver_info
+        else:
+            self.driver_info = {}
+        if instance_info:
+            self.instance_info = instance_info
+        else:
+            self.instance_info = {
+                'agent_url': 'http://127.0.0.1/foo',
+                'image_info': {
+                    'image_id': 'test',
+                    'direct_url': 'swift+http://example.com/v2'
+                                  '.0/container/fake-uuid'
+                },
+                'metadata': {
+                    'foo': 'bar'
+                },
+                'files': ['foo.tar.gz']
+            }
+        if uuid:
+            self.uuid = uuid
+        else:
+            self.uuid = None
+
+    def save(self, context):
+        pass
+
+
+class FakeTask(object):
+    def __init__(self):
+        self.drivername = "fake"
+        self.context = {}
+
+
+class FakePort(object):
+    def __init__(self, uuid=None, node_id=None):
+        self.uuid = uuid or 'fake-uuid'
+        self.node_id = node_id or 'fake-node'
+
+    def save(self, context):
+        pass
+
+
+class TestAgentDeploy(test.BaseTestCase):
+    def setUp(self):
+        super(TestAgentDeploy, self).setUp()
+        self.driver = agent.AgentDeploy()
+        self.task = FakeTask()
+
+    def test_validate(self):
+        self.driver.validate(FakeTask(), FakeNode())
+
+    def test_validate_fail(self):
+        node = FakeNode()
+        del node.instance_info['agent_url']
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.driver.validate,
+                          FakeTask(),
+                          node)
+
+    @mock.patch('ironic.common.image_service.Service')
+    @mock.patch('ironic.drivers.modules.agent.AgentDeploy._get_client')
+    def test_deploy(self, get_client_mock, image_service_mock):
+        node = FakeNode()
+        info = node.instance_info
+        expected_image_info = info['image_info']
+        expected_image_info['urls'] = [
+            'swift+http://example.com/v2.0/container/fake-uuid']
+
+        client_mock = mock.Mock()
+
+        glance_mock = mock.Mock()
+        glance_mock.swift_temp_url.return_value = 'swift+http://example' \
+                                                  '.com/v2' \
+                                                  '.0/container/fake-uuid'
+        image_service_mock.return_value = glance_mock
+
+        client_mock.prepare_image.return_value = None
+        client_mock.run_image.return_value = None
+
+        get_client_mock.return_value = client_mock
+
+        driver_return = self.driver.deploy(self.task, node)
+        client_mock.prepare_image.assert_called_with(node,
+                                                     expected_image_info,
+                                                     info['metadata'],
+                                                     info['files'],
+                                                     wait=True)
+        client_mock.run_image.assert_called_with(node, wait=True)
+        glance_mock.swift_temp_url.assert_called_with(info['image_info'])
+        self.assertEqual(driver_return, states.DEPLOYDONE)
+
+    @mock.patch('ironic.conductor.utils.node_power_action')
+    def test_tear_down(self, power_mock):
+        node = FakeNode()
+
+        driver_return = self.driver.tear_down(self.task, node)
+        power_mock.assert_called_with(self.task, node, states.REBOOT)
+
+        self.assertEqual(driver_return, states.DELETING)
+
+    @mock.patch('ironic.drivers.modules.agent.AgentDeploy._get_client')
+    def test_prepare(self, get_client_mock):
+        node = FakeNode()
+        driver_return = self.driver.prepare(self.task, node)
+        self.assertEqual(None, driver_return)
+
+    def test_validate_bad_params(self):
+        node = FakeNode()
+        del node.instance_info['image_info']
+        self.assertRaises(exception.InvalidParameterValue,
+            self.driver.validate,
+            FakeTask(),
+            node)
+
+
+class TestAgentVendor(test.BaseTestCase):
+    def setUp(self):
+        super(TestAgentVendor, self).setUp()
+        self.passthru = agent.AgentVendorInterface()
+        self.passthru.db_connection = mock.Mock(autospec=True)
+        port_patcher = mock.patch.object(self.passthru.db_connection,
+                                        'get_port')
+        self.port_mock = port_patcher.start()
+        node_patcher = mock.patch.object(self.passthru.db_connection,
+                                         'get_node')
+        self.node_mock = node_patcher.start()
+        time_patcher = mock.patch.object(agent, '_time')
+        self.time_mock = time_patcher.start()
+        self.fake_time = 1395964422
+        self.time_mock.return_value = self.fake_time
+        self.task = FakeTask()
+
+    def test_validate(self):
+        node = FakeNode()
+        kwargs = {
+            'agent_url': 'http://127.0.0.1:9999/bar'
+        }
+        self.passthru.validate(None,
+                               node,
+                               'deploy',
+                               **kwargs)
+
+    def test_validate_bad_params(self):
+        node = FakeNode()
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.passthru.validate,
+                          None,
+                          node,
+                          'deploy')
+
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._find_node_by_macs')
+    def test_heartbeat_no_uuid(self, find_mock):
+        kwargs = {
+            'hardware': [
+                {
+                    'id': 'aa:bb:cc:dd:ee:ff',
+                    'type': 'mac_address'
+                },
+                {
+                    'id': 'ff:ee:dd:cc:bb:aa',
+                    'type': 'mac_address'
+                }
+
+                ]
+        }
+        expected_node = FakeNode(uuid='heartbeat')
+        find_mock.return_value = expected_node
+
+        node = self.passthru._heartbeat_no_uuid(FakeTask(), **kwargs)
+        self.assertEqual(expected_node, node['node'])
+
+    def test_heartbeat_no_uuid_bad_kwargs(self):
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.passthru._heartbeat_no_uuid,
+                          FakeTask())
+
+    def test_find_ports_by_macs(self):
+        fake_port = FakePort()
+        fake_task = mock.MagicMock()
+        fake_task.dbapi.get_port.return_value = fake_port
+
+        macs = ['aa:bb:cc:dd:ee:ff']
+
+        ports = self.passthru._find_ports_by_macs(fake_task, macs)
+        self.assertEqual(1, len(ports))
+        self.assertEqual(fake_port.uuid, ports[0].uuid)
+        self.assertEqual(fake_port.node_id, ports[0].node_id)
+
+    def test_find_ports_by_macs_bad_params(self):
+        fake_task = mock.MagicMock()
+        fake_task.dbapi.get_port.side_effect = exception.PortNotFound
+
+        macs = ['aa:bb:cc:dd:ee:ff']
+        empty_ids = self.passthru._find_ports_by_macs(fake_task, macs)
+        self.assertEqual([], empty_ids)
+
+    @mock.patch('ironic.objects.node.Node.get_by_uuid')
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._get_node_id')
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._find_ports_by_macs')
+    def test_find_node_by_macs(self, ports_mock, node_id_mock, node_mock):
+        ports_mock.return_value = [FakePort()]
+        node_id_mock.return_value = 'c3e83a6a-f094-4c55-8480-760a44efffc6'
+        fake_node = FakeNode()
+        node_mock.return_value = fake_node
+
+        macs = ['aa:bb:cc:dd:ee:ff']
+        node = self.passthru._find_node_by_macs(FakeTask(), macs)
+        self.assertEqual(fake_node, node)
+
+    @mock.patch('ironic.objects.node.Node.get_by_uuid')
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._get_node_id')
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._find_ports_by_macs')
+    def test_find_node_by_macs_bad_params(self, ports_mock, node_id_mock,
+                                          node_mock):
+        ports_mock.return_value = []
+        node_id_mock.return_value = 'fake-uuid'
+        node_mock.side_effect = db_exc.NoResultFound()
+
+        macs = ['aa:bb:cc:dd:ee:ff']
+        self.assertRaises(exception.NodeNotFound,
+                          self.passthru._find_node_by_macs,
+                          FakeTask(),
+                          macs)
+
+    def test_get_node_id(self):
+        fake_port1 = FakePort(node_id='fake-uuid')
+        fake_port2 = FakePort(node_id='fake-uuid')
+
+        node_id = self.passthru._get_node_id([fake_port1, fake_port2])
+        self.assertEqual(fake_port2.uuid, node_id)
+
+    def test_get_node_id_exception(self):
+        fake_port1 = FakePort(node_id='fake-uuid')
+        fake_port2 = FakePort(node_id='other-fake-uuid')
+
+        self.assertRaises(exception.NodeNotFound,
+                          self.passthru._get_node_id,
+                          [fake_port1, fake_port2])
+
+    def test_heartbeat(self):
+        task = FakeTask()
+        fake_node = mock.MagicMock()
+        fake_node.instance_info = {}
+        kwargs = {
+            'agent_url': 'http://127.0.0.1:9999/bar'
+        }
+        self.passthru._heartbeat(task, fake_node, **kwargs)
