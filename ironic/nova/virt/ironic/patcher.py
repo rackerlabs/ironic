@@ -39,6 +39,8 @@ def create(node):
     """
     if 'pxe' in node.driver:
         return PXEDriverFields(node)
+    elif 'agent' in node.driver:
+        return AgentDriverFields(node)
     else:
         return GenericDriverFields(node)
 
@@ -127,4 +129,46 @@ class PXEDriverFields(GenericDriverFields):
             if field in driver_info:
                 patch.append({'op': 'remove',
                               'path': '/driver_info/%s' % field})
+        return patch
+
+class AgentDriverFields(GenericDriverFields):
+
+    def get_deploy_patch(self, instance, image_meta, flavor):
+        """Build a patch to add the required fields to deploy a node.
+
+        Build a json-patch to add the required fields to deploy a node
+        using the PXE driver.
+
+        :param instance: the instance object.
+        :param image_meta: the metadata associated with the instance
+                            image.
+        :param flavor: the flavor object.
+        :returns: a json-patch with the fields that needs to be updated.
+
+        """
+        patch = []
+        patch.append({'path': '/instance_info/image_source', 'op': 'add',
+                      'value': image_meta['id']})
+        patch.append({'path': '/instance_info/configdrive', 'op': 'add',
+                      'value': instance.configdrive})
+        return patch
+
+    def get_cleanup_patch(self, instance, network_info):
+        """Build a patch to clean up the fields.
+
+        Build a json-patch to remove the fields used to deploy a node
+        using the PXE driver.
+
+        :param instance: the instance object.
+        :param network_info: the instance network information.
+        :returns: a json-patch with the fields that needs to be updated.
+
+        """
+        patch = []
+        instance_info = self.node.instance_info
+        fields = ['image_source', 'configdrive']
+        for field in fields:
+            if field in instance_info:
+                patch.append({'op': 'remove',
+                              'path': '/instance_info/%s' % field})
         return patch
