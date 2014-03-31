@@ -69,11 +69,11 @@ class NeutronAPI(object):
             params['tenant_name'] = CONF.keystone_authtoken.admin_tenant_name
             params['password'] = CONF.keystone_authtoken.admin_password
             params['auth_url'] = (CONF.keystone_authtoken.auth_uri or '')
+            params['auth_strategy'] = 'keystone'
         else:
             params['token'] = context.auth_token
             params['endpoint_url'] = CONF.neutron.url
-            params['auth_strategy'] = None
-
+            params['auth_strategy'] = 'noauth'
         self.client = clientv20.Client(**params)
 
     def update_port_dhcp_opts(self, port_id, dhcp_options):
