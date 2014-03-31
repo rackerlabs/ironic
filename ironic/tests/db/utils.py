@@ -65,6 +65,14 @@ def get_test_seamicro_info():
     }
 
 
+def get_test_agent_info():
+    return {
+        'agent_url': 'http://127.0.0.1/foo',
+        'configdrive': 'abc123',
+        'image_source': 'fake-image'
+    }
+
+
 def get_test_node(**kw):
     properties = {
         "cpu_arch": "x86_64",

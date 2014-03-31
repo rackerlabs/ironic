@@ -175,8 +175,8 @@ def _build_pxe_config_options(node, pxe_info, ctx):
             'pxe_append_params': CONF.pxe.pxe_append_params,
         }
     return tftp._build_pxe_config(node,
-                                     pxe_options,
-                                     CONF.pxe.pxe_config_template)
+                                  pxe_options,
+                                  CONF.pxe.pxe_config_template)
 
 
 def _get_image_dir_path(node_uuid):

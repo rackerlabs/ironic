@@ -74,7 +74,7 @@ def _build_pxe_config(node, pxe_options, pxe_config_template):
     This method builds the PXE boot configuration file for a node,
     given all the required parameters.
 
-    :param pxe_options: A dict of values to set on the configuarion file
+    :param pxe_options: A dict of values to set on the configuration file
     :returns: A formated string with the file content.
     """
     LOG.debug(_("Building PXE config for deployment %s.") % node['id'])
