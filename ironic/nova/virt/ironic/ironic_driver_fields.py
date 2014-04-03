@@ -58,3 +58,13 @@ class PXE(object):
                ]
 
     optional = []
+
+
+class Agent(object):
+    required = [
+        {'ironic_path': '/instance_info',
+         'ironic_variable': 'image_source',
+         'nova_object': 'image_meta',
+         'object_field': 'id'},
+    ]
+    optional = []
