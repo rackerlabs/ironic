@@ -249,13 +249,20 @@ class IronicDriver(virt_driver.ComputeDriver):
 
     def _add_driver_fields(self, node, instance, image_meta, flavor=None):
         icli = self._get_client()
-        if 'pxe' in node.driver:
-            # add required fields
-            pxe_fields = importutils.import_class(
-                'ironic.nova.virt.ironic.ironic_driver_fields.PXE')
+        fields = None
 
+        # add required fields
+        if 'pxe' in node.driver:
+            fields = importutils.import_class(
+                'ironic.nova.virt.ironic.ironic_driver_fields.PXE')
+        elif 'agent' in node.driver:
+            fields = importutils.import_class(
+                'ironic.nova.virt.ironic.ironic_driver_fields.Agent')
+            # TODO(jimrollenhagen) also add configdrive here
+
+        if fields:
             patch = []
-            for field in pxe_fields.required:
+            for field in fields.required:
                 path_to_add = "%s/%s" % (field['ironic_path'],
                                          field['ironic_variable'])
                 patch = [{'op': 'add',
@@ -276,13 +283,20 @@ class IronicDriver(virt_driver.ComputeDriver):
 
     def _cleanup_deploy(self, node, instance, network_info):
         icli = self._get_client()
-        if 'pxe' in node.driver:
-            # add required fields
-            pxe_fields = importutils.import_class(
-                'ironic.nova.virt.ironic.ironic_driver_fields.PXE')
+        fields = None
 
+        # remove required fields
+        if 'pxe' in node.driver:
+            fields = importutils.import_class(
+                'ironic.nova.virt.ironic.ironic_driver_fields.PXE')
+        elif 'agent' in node.driver:
+            fields = importutils.import_class(
+                'ironic.nova.virt.ironic.ironic_driver_fields.Agent')
+            # TODO(jimrollenhagen) remove configdrive
+
+        if fields:
             patch = []
-            for field in pxe_fields.required:
+            for field in fields.required:
                 path_to_remove = "%s/%s" % (field['ironic_path'],
                                             field['ironic_variable'])
                 patch = [{'op': 'remove', 'path': path_to_remove}]
