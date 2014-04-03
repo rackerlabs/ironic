@@ -885,3 +885,43 @@ class IronicDriverTestCase(test.NoDBTestCase):
 
         # assert port.update() was not called
         assert not mock_update.called
+
+    @mock.patch.object(FAKE_CLIENT.node, 'update')
+    def test__add_agent_driver_fields(self, mock_update):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        expected_body = [{
+            'path': '/instance_info/image_source',
+            'value': u'test',
+            'op': 'add'
+        }]
+        instance_uuid = uuidutils.generate_uuid()
+        node = get_test_node(uuid=node_uuid,
+                             instance_uuid=instance_uuid,
+                             driver='agent')
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid)
+        self.driver._add_driver_fields(node, instance, {'id': 'test'})
+        mock_update.assert_called_once_with(node_uuid, expected_body)
+
+    @mock.patch.object(FAKE_CLIENT.node, 'update')
+    def test__cleanup_agent_deploy(self, mock_update):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        uuid_body = [{
+            'path': '/instance_uuid',
+            'op': 'remove'
+        }]
+        expected_body = [{
+            'path': '/instance_info/image_source',
+            'op': 'remove'
+        }]
+        instance_uuid = uuidutils.generate_uuid()
+        node = get_test_node(uuid=node_uuid,
+                             instance_uuid=instance_uuid,
+                             driver='agent')
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   uuid=instance_uuid)
+        self.driver._cleanup_deploy(node, instance, {})
+        self.assertEqual(2, mock_update.call_count)
+        expected_calls = [mock.call(node_uuid, uuid_body),
+                          mock.call(node_uuid, expected_body)]
+        self.assertEqual(expected_calls, mock_update.mock_calls)
