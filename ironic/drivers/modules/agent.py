@@ -192,7 +192,7 @@ class AgentVendorInterface(base.VendorInterface):
             'heartbeat': self._heartbeat
         }
         self.driver_routes = {
-            'lookup': self._heartbeat_no_uuid
+            'lookup': self._lookup,
         }
         self.dbapi = dbapi.get_instance()
 
@@ -248,7 +248,31 @@ class AgentVendorInterface(base.VendorInterface):
         node.instance_info = instance_info
         node.save(task.context)
 
-    def _heartbeat_no_uuid(self, context, **kwargs):
+    def _lookup(self, context, **kwargs):
+        """Driver vendor passthru method called by the agent when it first
+        starts up, in order to map itself to a node. The agent should submit a
+        versioned inventory of the server:
+
+            {
+                "version": "1",
+                "inventory": ...version specific payload...
+            }
+
+        :raises: NotFound if no matching node is found.
+        """
+        version = kwargs.get('version')
+
+        # NOTE(russell_h): Payloads submitted by the agent are currently
+        # unversioned. We will treat these payloads as version '0' until they
+        # can be deprecated entirely. Meanwhile, we will introduce a v1 payload
+        # which will be the first to be explicitly versioned.
+        if version is None:
+            return self._lookup_v0(context, **kwargs)
+
+        raise exception.InvalidParameterValue(_('Unknown lookup payload'
+                                                'version: %s') % version)
+
+    def _lookup_v0(self, context, **kwargs):
         """Method to be called the first time a ramdisk agent checks in. This
         can be because this is a node just entering decom or a node that
         rebooted for some reason. We will use the mac addresses listed in the
