@@ -173,8 +173,27 @@ class TestAgentVendor(test.BaseTestCase):
                           'deploy')
 
     @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._lookup_v0')
+    def test_lookup_unversioned_success(self, mocked_lookup_v0):
+        kwargs = {
+            'hardware': [],
+        }
+        context = FakeTask()
+        self.passthru._lookup(context, **kwargs)
+        mocked_lookup_v0.assertCalledOnceWith(context, **kwargs)
+
+    def test_lookup_version_not_found(self):
+        kwargs = {
+            'version': '999',
+        }
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.passthru._lookup,
+                          FakeTask(),
+                          **kwargs)
+
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
                 '._find_node_by_macs')
-    def test_heartbeat_no_uuid(self, find_mock):
+    def test_lookup_v0(self, find_mock):
         kwargs = {
             'hardware': [
                 {
@@ -191,12 +210,12 @@ class TestAgentVendor(test.BaseTestCase):
         expected_node = FakeNode(uuid='heartbeat')
         find_mock.return_value = expected_node
 
-        node = self.passthru._heartbeat_no_uuid(FakeTask(), **kwargs)
+        node = self.passthru._lookup_v0(FakeTask(), **kwargs)
         self.assertEqual(expected_node, node['node'])
 
-    def test_heartbeat_no_uuid_bad_kwargs(self):
+    def test_lookup_v0_bad_kwargs(self):
         self.assertRaises(exception.InvalidParameterValue,
-                          self.passthru._heartbeat_no_uuid,
+                          self.passthru._lookup_v0,
                           FakeTask())
 
     def test_find_ports_by_macs(self):
