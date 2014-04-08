@@ -266,6 +266,8 @@ class AgentVendorInterface(base.VendorInterface):
         # which will be the first to be explicitly versioned.
         if version is None:
             return self._lookup_v0(task, **kwargs)
+        elif version == '1':
+            return self._lookup_v1(task, **kwargs)
 
         raise exception.InvalidParameterValue(_('Unknown lookup payload'
                                                 'version: %s') % version)
@@ -327,6 +329,69 @@ class AgentVendorInterface(base.VendorInterface):
                 mac_addresses.append(mac)
 
         node_object = self._find_node_by_macs(task, mac_addresses)
+        return {
+            'heartbeat_timeout': CONF.agent_driver.heartbeat_timeout,
+            'node': node_object
+        }
+
+    def _lookup_v1(self, context, **kwargs):
+        """Method to be called the first time a ramdisk agent checks in. This
+        can be because this is a node just entering decom or a node that
+        rebooted for some reason. We will use the mac addresses listed in the
+        kwargs to find the matching node, then return the node object to the
+        agent. The agent can that use that UUID to use the normal vendor
+        passthru method.
+
+        Currently, we don't handle the instance where the agent doesn't have
+        a matching node (i.e. a brand new, never been in Ironic node).
+
+        kwargs should have the following format:
+        {
+            version: "1",
+            inventory: [
+                {
+                    'id': 'aa:bb:cc:dd:ee:ff',
+                    'type': 'mac_address'
+                },
+                {
+                    'id': '00:11:22:33:44:55',
+                    'type': 'mac_address'
+                }
+            ], ...
+        }
+
+        inventory is a list of dicts with id being the actual mac address,
+        with type 'mac_address' for the non-IPMI ports in the
+        server, (the normal network ports). They should be in the format
+        "aa:bb:cc:dd:ee:ff".
+
+        This method will also return the timeout for heartbeats. The driver
+        will expect the agent to heartbeat before that timeout, or it will be
+        considered down. This will be in a root level key called
+        'heartbeat_timeout'
+        """
+        if not kwargs.get('inventory'):
+            raise exception.InvalidParameterValue(_('"inventory" is a '
+                                                    'required parameter and '
+                                                    'must not be empty'))
+
+        # Find the address from the inventory list
+        mac_addresses = []
+        for hardware in kwargs['inventory']:
+            if 'id' not in hardware or 'type' not in hardware:
+                LOG.warning(_('Malformed hardware entry %s') % hardware)
+                continue
+            if hardware['type'] == 'mac_address':
+                try:
+                    mac = utils.validate_and_normalize_mac(
+                        hardware['id'])
+                except exception.InvalidMAC:
+                    LOG.warning(_('Malformed MAC in hardware entry %s.')
+                                % hardware)
+                    continue
+                mac_addresses.append(mac)
+
+        node_object = self._find_node_by_macs(context, mac_addresses)
         return {
             'heartbeat_timeout': CONF.agent_driver.heartbeat_timeout,
             'node': node_object
