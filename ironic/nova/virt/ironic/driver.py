@@ -20,12 +20,17 @@
 A driver wrapping the Ironic API, such that Nova may provision
 bare metal resources.
 """
+import base64
+import gzip
+import os
+import tempfile
 
 from ironicclient import client as ironic_client
 from ironicclient import exc as ironic_exception
 from oslo.config import cfg
 
 from ironic.nova.virt.ironic import ironic_states
+from nova.api.metadata import base as instance_metadata
 from nova.compute import power_state
 from nova import exception
 from nova.objects import flavor as flavor_obj
@@ -35,6 +40,7 @@ from nova.openstack.common import importutils
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import loopingcall
+from nova.virt import configdrive
 from nova.virt import driver as virt_driver
 from nova.virt import firewall
 
@@ -60,6 +66,10 @@ opts = [
                default='pxelinux.0'),
     cfg.StrOpt('admin_tenant_name',
                help='Ironic keystone tenant name.'),
+    cfg.StrOpt('temp_file_dir',
+               default='/tmp/configdrive',
+               help='The folder where temporary files, such as configdrives '
+                    'will be stored.'),
     cfg.ListOpt('instance_type_extra_specs',
                 default=[],
                 help='A list of additional capabilities corresponding to '
@@ -258,7 +268,6 @@ class IronicDriver(virt_driver.ComputeDriver):
         elif 'agent' in node.driver:
             fields = importutils.import_class(
                 'ironic.nova.virt.ironic.ironic_driver_fields.Agent')
-            # TODO(jimrollenhagen) also add configdrive here
 
         if fields:
             patch = []
@@ -270,6 +279,7 @@ class IronicDriver(virt_driver.ComputeDriver):
                          'value': unicode(_get_required_value(
                                           eval(field['nova_object']),
                                                field['object_field']))}]
+
                 try:
                     self._retry_if_service_is_unavailable(icli.node.update,
                                                           node.uuid, patch)
@@ -306,7 +316,6 @@ class IronicDriver(virt_driver.ComputeDriver):
         elif 'agent' in node.driver:
             fields = importutils.import_class(
                 'ironic.nova.virt.ironic.ironic_driver_fields.Agent')
-            # TODO(jimrollenhagen) remove configdrive
 
         if fields:
             patch = []
@@ -441,6 +450,14 @@ class IronicDriver(virt_driver.ComputeDriver):
         # use the ironic_driver_fields file to import
         flavor = flavor_obj.Flavor.get_by_id(context,
                                              instance['instance_type_id'])
+
+        # Generate a config drive
+        if 'agent' in node.driver:
+            instance.configdrive = self.generate_configdrive(instance,
+                                                             node,
+                                                             network_info,
+                                                             admin_password,
+                                                             injected_files)
         self._add_driver_fields(node, instance, image_meta, flavor)
 
         #validate we ready to do the deploy
@@ -698,3 +715,50 @@ class IronicDriver(virt_driver.ComputeDriver):
         icli = self._get_client()
         node = icli.node.get(instance['node'])
         self._unplug_vifs(node, instance, network_info)
+
+    def generate_configdrive(self, instance, node, network_info,
+                             admin_password=None, files=None):
+        """Generate a config drive. Returns path to temp file with config
+        drive in it.
+        """
+
+        # Shamelessly copied from https://github.com/openstack/nova/blob/
+        # master/nova/virt/xenapi/vm_utils.py#L1204-L1213
+        extra_md = {}
+        if admin_password:
+            extra_md['admin_pass'] = admin_password
+        inst_md = instance_metadata.InstanceMetadata(
+            instance,
+            content=files, extra_md=extra_md,
+            network_info=network_info)
+
+        if not os.path.exists(CONF.ironic.temp_file_dir):
+            try:
+                os.makedirs(CONF.ironic.temp_file_dir)
+            except OSError:
+                raise exception.NovaException(_("Could not create temp file "
+                                                "dir for config drive."))
+
+        with tempfile.TemporaryFile() as tmp_file:
+            with configdrive.ConfigDriveBuilder(instance_md=inst_md) as cdb:
+                cdb.make_drive(tmp_file)
+
+            # Create a second temp file to put compressed data in.
+            with tempfile.TemporaryFile() as compressed_file:
+                self._compress_file(tmp_file, compressed_file)
+                #TODO(JoshNang) add option to upload to swift. For now, base64 encode
+                # and store in DB field.
+                with open(compressed_file, "rb") as image_file:
+                    return base64.b64encode(image_file.read())
+
+    def _compress_file(self, infile, outfile):
+        """Gzips file and adds a .gz to the file name. Removes old file."""
+        try:
+            with open(infile, 'rb') as f_in:
+                with gzip.open(outfile, 'wb') as f_out:
+                    f_out.writelines(f_in)
+        except OSError:
+            LOG.warning(_("Could not compress configdrive file %s") %
+                          infile)
+            raise exception.NovaException(_("Could not compress configdrive "
+                                            "file %s") % infile)
