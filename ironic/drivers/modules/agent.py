@@ -80,7 +80,7 @@ class AgentDeploy(base.DeployInterface):
         if node.instance_info is None:
             raise exception.InvalidParameterValue(_('instance_info cannot be '
                                                     'null.'))
-        required_fields = ['agent_url', 'image_info', 'metadata', 'files']
+        required_fields = ['agent_url', 'image_source', 'configdrive']
         for field in required_fields:
             if field not in node.instance_info:
                 raise exception.InvalidParameterValue(_('%s is required in '
@@ -99,20 +99,22 @@ class AgentDeploy(base.DeployInterface):
         :param node: the Node to act upon.
         :returns: status of the deploy. One of ironic.common.states.
         """
-        image_info = node.instance_info.get('image_info')
-        metadata = node.instance_info.get('metadata')
-        files = node.instance_info.get('files')
+        image_source = node.instance_info.get('image_source')
+        configdrive = node.instance_info.get('configdrive')
 
         # Get the swift temp url
         glance = image_service.Service(version=2)
+        image_info = glance.show(image_source)
         swift_temp_url = glance.swift_temp_url(image_info)
         image_info['urls'] = [swift_temp_url]
 
         # Tell the client to download and run the image with the given args
         client = self._get_client()
-        client.prepare_image(node, image_info, metadata, files, wait=True)
+        client.prepare_image(node, image_info, configdrive, wait=True)
         # TODO(JoshNang) Switch network here
-        client.run_image(node, wait=True)
+        # TODO(jimrollenhagen) client.run_image(node)
+        manager_utils.node_set_boot_device(task, node, 'disk')
+        manager_utils.node_power_action(task, node, states.REBOOT)
         # TODO(JoshNang) don't return until we have a totally working
         # machine, so we'll need to do some kind of testing here.
         return states.DEPLOYDONE
@@ -127,7 +129,8 @@ class AgentDeploy(base.DeployInterface):
         :param node: the Node to act upon.
         :returns: status of the deploy. One of ironic.common.states.
         """
-        # Reboot
+        # Reboot into ramdisk
+        manager_utils.node_set_boot_device(task, node, 'pxe')
         manager_utils.node_power_action(task, node, states.REBOOT)
         # TODO(russell_h): resume decom when the agent comes back up
         return states.DELETING
