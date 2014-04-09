@@ -35,9 +35,8 @@ class AgentAndIPMIToolDriver(base.BaseDriver):
         self.deploy = agent.AgentDeploy()
         self.agent_vendor = agent.AgentVendorInterface()
         self.ipmi_vendor = ipmitool.VendorPassthru()
-        #TODO(JoshNang) add lookup: nodeless passthru mapping when its added
-        #to utils.MixinVendorInterface
         self.mapping = {'heartbeat': self.agent_vendor,
+                        'lookup': self.agent_vendor,
                         'set_boot_device': self.ipmi_vendor}
         self.vendor = utils.MixinVendorInterface(self.mapping)
 
@@ -58,9 +57,8 @@ class AgentAndIPMINativeDriver(base.BaseDriver):
         self.deploy = agent.AgentDeploy()
         self.agent_vendor = agent.AgentVendorInterface()
         self.ipmi_vendor = ipminative.VendorPassthru()
-        #TODO(JoshNang) add lookup: nodeless passthru mapping when its added
-        #to utils.MixinVendorInterface
         self.mapping = {'heartbeat': self.agent_vendor,
+                        'lookup': self.agent_vendor,
                         'set_boot_device': self.ipmi_vendor}
         self.vendor = utils.MixinVendorInterface(self.mapping)
 
@@ -81,4 +79,5 @@ class AgentAndSSHDriver(base.BaseDriver):
         self.power = ssh.SSHPower()
         self.deploy = agent.AgentDeploy()
         self.vendor = agent.AgentVendorInterface()
-        self.mapping = {'heartbeat': self.agent_vendor}
+        self.mapping = {'heartbeat': self.agent_vendor,
+                        'lookup': self.agent_vendor}
