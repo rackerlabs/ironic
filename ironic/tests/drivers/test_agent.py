@@ -35,15 +35,8 @@ class FakeNode(object):
         else:
             self.instance_info = {
                 'agent_url': 'http://127.0.0.1/foo',
-                'image_info': {
-                    'image_id': 'test',
-                    'direct_url': 'swift+http://example.com/v2'
-                                  '.0/container/fake-uuid'
-                },
-                'metadata': {
-                    'foo': 'bar'
-                },
-                'files': ['foo.tar.gz']
+                'image_source': 'fake-image',
+                'configdrive': 'abc123'
             }
         if uuid:
             self.uuid = uuid
@@ -86,44 +79,44 @@ class TestAgentDeploy(test.BaseTestCase):
                           FakeTask(),
                           node)
 
+    @mock.patch('ironic.conductor.utils.node_set_boot_device')
+    @mock.patch('ironic.conductor.utils.node_power_action')
     @mock.patch('ironic.common.image_service.Service')
     @mock.patch('ironic.drivers.modules.agent.AgentDeploy._get_client')
-    def test_deploy(self, get_client_mock, image_service_mock):
+    def test_deploy(self, get_client_mock, image_service_mock, power_mock,
+                    bootdev_mock):
         node = FakeNode()
         info = node.instance_info
-        expected_image_info = info['image_info']
-        expected_image_info['urls'] = [
-            'swift+http://example.com/v2.0/container/fake-uuid']
+        test_temp_url = 'swift+http://example.com/v2.0/container/fake-uuid'
+        expected_image_info = {'urls': [test_temp_url]}
 
         client_mock = mock.Mock()
 
         glance_mock = mock.Mock()
-        glance_mock.swift_temp_url.return_value = 'swift+http://example' \
-                                                  '.com/v2' \
-                                                  '.0/container/fake-uuid'
+        glance_mock.show.return_value = {}
+        glance_mock.swift_temp_url.return_value = test_temp_url
         image_service_mock.return_value = glance_mock
 
         client_mock.prepare_image.return_value = None
-        client_mock.run_image.return_value = None
-
         get_client_mock.return_value = client_mock
 
         driver_return = self.driver.deploy(self.task, node)
         client_mock.prepare_image.assert_called_with(node,
                                                      expected_image_info,
-                                                     info['metadata'],
-                                                     info['files'],
+                                                     info['configdrive'],
                                                      wait=True)
-        client_mock.run_image.assert_called_with(node, wait=True)
-        glance_mock.swift_temp_url.assert_called_with(info['image_info'])
+        power_mock.assert_called_with(self.task, node, states.REBOOT)
+        bootdev_mock.assert_called_with(self.task, node, 'disk')
         self.assertEqual(driver_return, states.DEPLOYDONE)
 
+    @mock.patch('ironic.conductor.utils.node_set_boot_device')
     @mock.patch('ironic.conductor.utils.node_power_action')
-    def test_tear_down(self, power_mock):
+    def test_tear_down(self, power_mock, bootdev_mock):
         node = FakeNode()
 
         driver_return = self.driver.tear_down(self.task, node)
         power_mock.assert_called_with(self.task, node, states.REBOOT)
+        bootdev_mock.assert_called_with(self.task, node, 'pxe')
 
         self.assertEqual(driver_return, states.DELETING)
 
@@ -132,14 +125,6 @@ class TestAgentDeploy(test.BaseTestCase):
         node = FakeNode()
         driver_return = self.driver.prepare(self.task, node)
         self.assertEqual(None, driver_return)
-
-    def test_validate_bad_params(self):
-        node = FakeNode()
-        del node.instance_info['image_info']
-        self.assertRaises(exception.InvalidParameterValue,
-            self.driver.validate,
-            FakeTask(),
-            node)
 
 
 class TestAgentVendor(test.BaseTestCase):
