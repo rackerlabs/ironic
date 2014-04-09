@@ -66,5 +66,9 @@ class Agent(object):
          'ironic_variable': 'image_source',
          'nova_object': 'image_meta',
          'object_field': 'id'},
+        {'ironic_path': '/instance_info',
+         'ironic_variable': 'configdrive',
+         'nova_object': 'instance',
+         'object_field': 'configdrive'},
     ]
     optional = []

@@ -925,3 +925,53 @@ class IronicDriverTestCase(test.NoDBTestCase):
         expected_calls = [mock.call(node_uuid, uuid_body),
                           mock.call(node_uuid, expected_body)]
         self.assertEqual(expected_calls, mock_update.mock_calls)
+
+    @mock.patch('base64.b64encode')
+    @mock.patch('__builtin__.open')
+    @mock.patch('nova.api.metadata.base.InstanceMetadata')
+    @mock.patch('nova.virt.configdrive.ConfigDriveBuilder')
+    def test_generate_configdrive(self, config_mock, instance_mock, open_mock,
+                                  b64_mock):
+        CONF.ironic.temp_file_dir = '/tmp'
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        make_drive_mock = mock.MagicMock()
+        config_mock.__enter__.return_value = make_drive_mock
+
+        instance_mock.return_value = 'instance_mock'
+
+        open_mock.return_value.__enter__ = lambda s: s
+        open_mock.return_value.__exit__ = mock.Mock()
+        open_mock.return_value.read.return_value = 'configdrivedata'
+
+        b64_mock.return_value = "b64encoded_configdrive"
+
+        instance = fake_instance.fake_instance_obj(self.ctx, node=node_uuid)
+        network_info = utils.get_test_network_info()
+        admin_password = 'hunter2'
+
+        expected_md = {'admin_pass': admin_password}
+
+        self.driver.generate_configdrive(instance=instance,
+                                         network_info=network_info,
+                                         admin_password=admin_password,
+                                         compress=False)
+
+        instance_mock.assert_called_once_with(instance,
+                                              content=None,
+                                              extra_md=expected_md,
+                                              network_info=network_info)
+
+        open_mock.assert_called_once_with(
+            '/tmp/configdrive-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'rb')
+
+        config_mock.assert_called_once_with(instance_md='instance_mock')
+
+        b64_mock.assert_called_once_with('configdrivedata')
+
+    @mock.patch('os.remove')
+    def test_cleanup_configdrive(self, remove_mock):
+        remove_mock.return_value = None
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        self.driver.cleanup_configdrive(node_uuid)
+        configdrive_file = '/tmp/configdrive-%s' % node_uuid
+        remove_mock.assert_called_with(configdrive_file)
