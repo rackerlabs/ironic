@@ -273,6 +273,8 @@ class AgentVendorInterface(base.VendorInterface):
             return self._lookup_v0(context, **kwargs)
         elif version == '1':
             return self._lookup_v1(context, **kwargs)
+        elif version == '2':
+            return self._lookup_v2(context, **kwargs)
 
         raise exception.InvalidParameterValue(_('Unknown lookup payload'
                                                 'version: %s') % version)
@@ -395,6 +397,72 @@ class AgentVendorInterface(base.VendorInterface):
                                 % hardware)
                     continue
                 mac_addresses.append(mac)
+
+        node_object = self._find_node_by_macs(context, mac_addresses)
+        return {
+            'heartbeat_timeout': CONF.agent_driver.heartbeat_timeout,
+            'node': node_object
+        }
+
+    def _lookup_v2(self, context, **kwargs):
+        """Method to be called the first time a ramdisk agent checks in. This
+        can be because this is a node just entering decom or a node that
+        rebooted for some reason. We will use the mac addresses listed in the
+        kwargs to find the matching node, then return the node object to the
+        agent. The agent can that use that UUID to use the normal vendor
+        passthru method.
+
+        Currently, we don't handle the instance where the agent doesn't have
+        a matching node (i.e. a brand new, never been in Ironic node).
+
+        kwargs should have the following format:
+        {
+            "version": "2"
+            "inventory": {
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "mac_address": "00:11:22:33:44:55",
+                        "switch_port_descr": "port24"
+                        "switch_chassis_descr": "tor1"
+                    },
+                ], ...
+            }
+        }
+
+        hardware is a list of dicts with id being the actual mac address,
+        with type 'mac_address' for the non-IPMI ports in the
+        server, (the normal network ports). They should be in the format
+        "aa:bb:cc:dd:ee:ff".
+
+        This method will also return the timeout for heartbeats. The driver
+        will expect the agent to heartbeat before that timeout, or it will be
+        considered down. This will be in a root level key called
+        'heartbeat_timeout'
+        """
+        if not kwargs.get('inventory'):
+            raise exception.InvalidParameterValue(
+                _('"inventory" is a required parameter and must not be empty'))
+        if not kwargs['inventory'].get('interfaces'):
+            raise exception.InvalidParameterValue(
+                _('"interfaces" is a required field for "inventory" and must '
+                  'not be empty'))
+        LOG.error(kwargs['inventory'])
+        # Find the address from the inventory list
+        mac_addresses = []
+        for interface in kwargs['inventory']['interfaces']:
+            if not interface.get('name') or not interface.get('mac_address'):
+                LOG.warning(_('Malformed interface entry %s') % interface)
+                continue
+
+            try:
+                mac = utils.validate_and_normalize_mac(
+                    interface['mac_address'])
+            except exception.InvalidMAC:
+                LOG.warning(_('Malformed MAC in interface entry %s.')
+                            % interface)
+                continue
+            mac_addresses.append(mac)
 
         node_object = self._find_node_by_macs(context, mac_addresses)
         return {
