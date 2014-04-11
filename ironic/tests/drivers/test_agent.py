@@ -242,6 +242,48 @@ class TestAgentVendor(test.BaseTestCase):
                           FakeTask(),
                           inventory={})
 
+    @mock.patch('ironic.drivers.modules.agent.AgentVendorInterface'
+                '._find_node_by_macs')
+    def test_lookup_v2(self, find_mock):
+        kwargs = {
+            'version': '2',
+            'inventory': {
+                'interfaces': [
+                    {
+                        'mac_address': 'aa:bb:cc:dd:ee:ff',
+                        'name': 'eth0'
+                    },
+                    {
+                        'mac_address': 'ff:ee:dd:cc:bb:aa',
+                        'name': 'eth1'
+                    }
+
+                ]
+            }
+        }
+        expected_node = FakeNode(uuid='heartbeat')
+        find_mock.return_value = expected_node
+
+        node = self.passthru._lookup_v1(FakeTask(), **kwargs)
+        self.assertEqual(expected_node, node['node'])
+
+    def test_lookup_v2_missing_inventory(self):
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.passthru._lookup_v1,
+                          FakeTask())
+
+    def test_lookup_v2_empty_inventory(self):
+        self.assertRaises(exception.InvalidParameterValue,
+                          self.passthru._lookup_v1,
+                          FakeTask(),
+                          inventory={})
+
+    def test_lookup_v2_empty_interfaces(self):
+        self.assertRaises(exception.NodeNotFound,
+                          self.passthru._lookup_v1,
+                          FakeTask(),
+                          inventory={'interfaces': []})
+
     def test_find_ports_by_macs(self):
         fake_port = FakePort()
 
