@@ -22,6 +22,7 @@ import abc
 import six
 
 from ironic.common import exception
+from ironic.common import states
 
 
 @six.add_metaclass(abc.ABCMeta)
@@ -93,6 +94,12 @@ class BaseDriver(object):
 class DeployInterface(object):
     """Interface for deploy-related actions."""
 
+    # The power states that are considered valid for each method.
+    valid_states = {
+        'deploy': [states.POWER_OFF],
+        'destroy': [states.POWER_OFF, states.NOSTATE]
+    }
+
     @abc.abstractmethod
     def validate(self, task, node):
         """Validate the driver-specific Node deployment info.
@@ -105,6 +112,42 @@ class DeployInterface(object):
         :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
+
+    def validate_power_state(self, task, action):
+        """Validate the driver-specific Node power state.
+
+        This method validates whether the power state of the task's node is in
+        a state that will allow Ironic to perform the specified action. The
+        default  implementation is to only allow nodes in POWER_OFF to be
+        deployed and only nodes in POWER_OFF or NOSTATE to be destroyed.
+        Individual drivers can override this function.
+
+        :param task: a task from TaskManager.
+        :param action: the action that is going to be performed on the node
+                       if validation succeeds. Default valid actions are
+                       'deploy' and 'destroy'.
+        :raises: NodeInWrongPowerState if the task's node is not in a
+                 supported power state.
+        """
+        node = task.node
+        node['power_state'] = task.driver.power.get_power_state(task,
+                                                                task.node)
+        if action not in self.valid_states:
+            raise exception.InvalidParameterValue(_(
+                "Unsupported action %(action)s called for "
+                "validate_power_state. Valid actions are %(valid_actions)s.")
+                % {'action': action,
+                   'valid_actions': self.valid_states.keys()})
+        if node.power_state not in self.valid_states.get(action):
+            msg = (_("Cannot perform %(action)s action on node %(node)s "
+                     "because its power state is %(state)s. Valid states "
+                     "are %(valid_states)s.") %
+                   {'node': node.uuid,
+                    'action': action,
+                    'state': node.power_state,
+                    'valid_states': self.valid_states.get(action)})
+
+            raise exception.NodeInWrongPowerState(msg)
 
     @abc.abstractmethod
     def deploy(self, task, node):
