@@ -22,6 +22,7 @@ import abc
 import six
 
 from ironic.common import exception
+from ironic.common import states
 
 
 @six.add_metaclass(abc.ABCMeta)
@@ -92,6 +93,10 @@ class BaseDriver(object):
 @six.add_metaclass(abc.ABCMeta)
 class DeployInterface(object):
     """Interface for deploy-related actions."""
+    valid_states = {
+        'deploy': [states.POWER_OFF],
+        'destroy': [states.POWER_OFF, states.NOSTATE]
+    }
 
     @abc.abstractmethod
     def validate(self, task, node):
@@ -105,6 +110,33 @@ class DeployInterface(object):
         :param node: a single Node to validate.
         :raises: InvalidParameterValue
         """
+
+    def validate_power_state(self, task, node, method):
+        """Validate the driver-specific Node power state.
+
+        This method validates whether the power state of the node is in a state
+        that will allow Ironic to deploy to it. The default implementation is
+        to only allow nodes in POWER_OFF to be deployed. Individual drivers can
+        override this function.
+
+        :param task: a task from TaskManager.
+        :param node: a single Node to validate.
+        :param method: the method that is validating the power state. Valid
+        values are 'deploy', and 'destroy'.
+        :raises: NodeInWrongPowerState if the node is not in a supported power
+        state.
+        """
+
+        if node['power_state'] not in self.valid_states.get(method, []):
+            msg = (_("Node %(node)s can't perform %(method)s because "
+                     "it's not in an allowed state. Current power state: "
+                     "%(state)s, valid states: %(valid_states)s.") %
+                   {'node': node.uuid,
+                    'method': method,
+                    'state': node['power_state'],
+                    'valid_states': self.valid_states.get(method, [])})
+
+            raise exception.NodeInWrongPowerState(msg)
 
     @abc.abstractmethod
     def deploy(self, task, node):
