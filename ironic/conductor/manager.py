@@ -170,8 +170,7 @@ class ConductorManager(periodic_task.PeriodicTasks):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
 
     @messaging.expected_exceptions(exception.InvalidParameterValue,
-                                   exception.NodeLocked,
-                                   exception.NodeInWrongPowerState)
+                                 exception.NodeLocked)
     def update_node(self, context, node_obj):
         """Update a node with the supplied data.
 
@@ -181,7 +180,6 @@ class ConductorManager(periodic_task.PeriodicTasks):
 
         :param context: an admin context
         :param node_obj: a changed (but not saved) node object.
-
         """
         node_id = node_obj.uuid
         LOG.debug(_("RPC update_node called for node %s.") % node_id)
@@ -201,11 +199,6 @@ class ConductorManager(periodic_task.PeriodicTasks):
                 task.driver.power.validate(task, node_obj)
                 node_obj['power_state'] = \
                         task.driver.power.get_power_state(task, node_obj)
-
-                if node_obj['power_state'] != states.POWER_OFF:
-                    raise exception.NodeInWrongPowerState(
-                            node=node_id,
-                            pstate=node_obj['power_state'])
 
             # update any remaining parameters, then save
             node_obj.save(context)
@@ -374,6 +367,14 @@ class ConductorManager(periodic_task.PeriodicTasks):
                     "RPC do_node_deploy failed to validate deploy info. "
                     "Error: %(msg)s") % {'msg': e})
 
+            try:
+                task.driver.deploy.validate_power_state(task, 'deploy')
+            except exception.NodeInWrongPowerState as e:
+                raise exception.InstanceDeployFailure(_(
+                    "RPC do_node_deploy failed to validate power state."
+                    "Error: %(msg)s") % {'msg': e}
+                )
+
             # Set target state to expose that work is in progress
             node.provision_state = states.DEPLOYING
             node.target_provision_state = states.DEPLOYDONE
@@ -428,6 +429,7 @@ class ConductorManager(periodic_task.PeriodicTasks):
                                             states.DEPLOYFAIL,
                                             states.ERROR,
                                             states.DEPLOYWAIT]:
+
                 raise exception.InstanceDeployFailure(_(
                     "RPC do_node_tear_down "
                     "not allowed for node %(node)s in state %(state)s")
@@ -779,7 +781,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
         :raises: NodeLocked if node is locked by another conductor.
         :raises: NodeAssociated if the node contains an instance
             associated with it.
-        :raises: NodeInWrongPowerState if the node is not powered off.
+        :raises: NodeInWrongPowerState if the node is not in a supported
+            power state.
 
         """
         with task_manager.acquire(context, node_id) as task:
@@ -787,10 +790,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
             if node.instance_uuid is not None:
                 raise exception.NodeAssociated(node=node.uuid,
                                                instance=node.instance_uuid)
-            if node.power_state not in [states.POWER_OFF, states.NOSTATE]:
-                msg = (_("Node %s can't be deleted because it's not "
-                         "powered off") % node.uuid)
-                raise exception.NodeInWrongPowerState(msg)
+            task.driver.deploy.validate_power_state(task, 'destroy')
+
             # FIXME(comstud): Remove context argument after we ensure
             # every instantiation of Node includes the context
             node.destroy(context)
