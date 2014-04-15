@@ -36,7 +36,7 @@ node; these locks are represented by the
 
 A :py:class:`ironic.common.hash_ring.HashRing` is used to distribute nodes
 across the set of active conductors which support each node's driver.
-Rebalancing this ring can trigger various actions by each conductor, such as
+Rebalancing this ring can tri193gger various actions by each conductor, such as
 building or tearing down the TFTP environment for a node, notifying Neutron of
 a change, etc.
 """
@@ -170,8 +170,7 @@ class ConductorManager(periodic_task.PeriodicTasks):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
 
     @messaging.expected_exceptions(exception.InvalidParameterValue,
-                                   exception.NodeLocked,
-                                   exception.NodeInWrongPowerState)
+                                   exception.NodeLocked)
     def update_node(self, context, node_obj):
         """Update a node with the supplied data.
 
@@ -181,7 +180,6 @@ class ConductorManager(periodic_task.PeriodicTasks):
 
         :param context: an admin context
         :param node_obj: a changed (but not saved) node object.
-
         """
         node_id = node_obj.uuid
         LOG.debug("RPC update_node called for node %s." % node_id)
@@ -193,19 +191,10 @@ class ConductorManager(periodic_task.PeriodicTasks):
 
         driver_name = node_obj.driver if 'driver' in delta else None
         with task_manager.acquire(context, node_id, shared=False,
-                                  driver_name=driver_name) as task:
+                                  driver_name=driver_name):
 
             # TODO(deva): Determine what value will be passed by API when
             #             instance_uuid needs to be unset, and handle it.
-            if 'instance_uuid' in delta:
-                task.driver.power.validate(task, node_obj)
-                node_obj['power_state'] = \
-                        task.driver.power.get_power_state(task, node_obj)
-
-                if node_obj['power_state'] != states.POWER_OFF:
-                    raise exception.NodeInWrongPowerState(
-                            node=node_id,
-                            pstate=node_obj['power_state'])
 
             # update any remaining parameters, then save
             node_obj.save(context)
@@ -367,9 +356,11 @@ class ConductorManager(periodic_task.PeriodicTasks):
 
             try:
                 task.driver.deploy.validate(task, node)
-            except exception.InvalidParameterValue as e:
+                task.driver.deploy.validate_power_state(task, 'deploy')
+            except (exception.InvalidParameterValue,
+                    exception.NodeInWrongPowerState) as e:
                 raise exception.InstanceDeployFailure(_(
-                    "RPC do_node_deploy failed to validate deploy info. "
+                    "RPC do_node_deploy failed validation. "
                     "Error: %(msg)s") % {'msg': e})
 
             # Set target state to expose that work is in progress
@@ -777,7 +768,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
         :raises: NodeLocked if node is locked by another conductor.
         :raises: NodeAssociated if the node contains an instance
             associated with it.
-        :raises: NodeInWrongPowerState if the node is not powered off.
+        :raises: NodeInWrongPowerState if the node is not in a supported
+            power state.
 
         """
         with task_manager.acquire(context, node_id) as task:
@@ -785,10 +777,8 @@ class ConductorManager(periodic_task.PeriodicTasks):
             if node.instance_uuid is not None:
                 raise exception.NodeAssociated(node=node.uuid,
                                                instance=node.instance_uuid)
-            if node.power_state not in [states.POWER_OFF, states.NOSTATE]:
-                msg = (_("Node %s can't be deleted because it's not "
-                         "powered off") % node.uuid)
-                raise exception.NodeInWrongPowerState(msg)
+            task.driver.deploy.validate_power_state(task, 'destroy')
+
             # FIXME(comstud): Remove context argument after we ensure
             # every instantiation of Node includes the context
             node.destroy(context)
