@@ -844,13 +844,6 @@
 # is created. (string value)
 #default_ephemeral_format=ext4
 
-# IP address of Ironic compute node's tftp server. (string
-# value)
-#tftp_server=$my_ip
-
-# Ironic compute node's tftp root path. (string value)
-#tftp_root=/tftpboot
-
 # Directory where images are stored on disk. (string value)
 #images_path=/var/lib/ironic/images/
 
@@ -861,9 +854,6 @@
 # Directory where master instance images are stored on disk.
 # (string value)
 #instance_master_path=/var/lib/ironic/master_images
-
-# Neutron bootfile DHCP parameter. (string value)
-#pxe_bootfile_name=pxelinux.0
 
 
 [seamicro]
@@ -907,5 +897,22 @@
 # Private key file to use when starting the server securely
 # (string value)
 #key_file=<None>
+
+
+[tftp]
+
+#
+# Options defined in ironic.common.tftp
+#
+
+# IP address of Ironic compute node's tftp server. (string
+# value)
+#tftp_server=$my_ip
+
+# Ironic compute node's tftp root path. (string value)
+#tftp_root=/tftpboot
+
+# Neutron bootfile DHCP parameter. (string value)
+#pxe_bootfile_name=pxelinux.0
 
 
