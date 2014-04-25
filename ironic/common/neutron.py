@@ -31,7 +31,7 @@ neutron_opts = [
     cfg.IntOpt('url_timeout',
                default=30,
                help='Timeout value for connecting to neutron in seconds.'),
-   ]
+    ]
 
 CONF = cfg.CONF
 CONF.register_opts(neutron_opts, group='neutron')
@@ -105,3 +105,19 @@ class NeutronAPI(object):
             LOG.exception(_("Failed to update MAC address on Neutron port %s."
                            ), port_id)
             raise exception.FailedToUpdateMacOnPort(port_id=port_id)
+
+
+def _get_node_vif_ids(task):
+    """Get all Neutron VIF ids for a node.
+       This function does not handle multi node operations.
+
+    :param task: a TaskManager instance.
+    :returns: A dict of the Node's port UUIDs and their associated VIFs
+
+    """
+    port_vifs = {}
+    for port in task.resources[0].ports:
+        vif = port.extra.get('vif_port_id')
+        if vif:
+            port_vifs[port.uuid] = vif
+    return port_vifs

@@ -15,15 +15,19 @@
 #    under the License.
 
 import mock
-
 from neutronclient.common import exceptions as neutron_client_exc
 from neutronclient.v2_0 import client
 from oslo.config import cfg
 
 from ironic.common import exception
 from ironic.common import neutron
+from ironic.common import utils
+from ironic.conductor import task_manager
+from ironic.db import api as dbapi
 from ironic.openstack.common import context
 from ironic.tests import base
+from ironic.tests.db import utils as db_utils
+
 
 CONF = cfg.CONF
 
@@ -42,6 +46,17 @@ class TestNeutron(base.TestCase):
                     admin_password='test-admin-password',
                     auth_uri='test-auth-uri',
                     group='keystone_authtoken')
+        self.dbapi = dbapi.get_instance()
+        self.node = self._create_test_node()
+        self.context = context.get_admin_context()
+
+    def _create_test_node(self, **kwargs):
+        n = db_utils.get_test_node(**kwargs)
+        return self.dbapi.create_node(n)
+
+    def _create_test_port(self, **kwargs):
+        p = db_utils.get_test_port(**kwargs)
+        return self.dbapi.create_port(p)
 
     def test_create_with_token(self):
         token = 'test-token-123'
@@ -143,3 +158,33 @@ class TestNeutron(base.TestCase):
                                 neutron_client_exc.NeutronClientException())
         self.assertRaises(exception.FailedToUpdateMacOnPort,
                           api.update_port_address, port_id, address)
+
+    def test__get_node_vif_ids_no_ports(self):
+        expected = {}
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            result = neutron._get_node_vif_ids(task)
+        self.assertEqual(expected, result)
+
+    def test__get_node_vif_ids_one_port(self):
+        port1 = self._create_test_port(node_id=self.node.id, id=6,
+                                       address='aa:bb:cc',
+                                       uuid=utils.generate_uuid(),
+                                       extra={'vif_port_id': 'test-vif-A'})
+        expected = {port1.uuid: 'test-vif-A'}
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            result = neutron._get_node_vif_ids(task)
+        self.assertEqual(expected, result)
+
+    def test__get_node_vif_ids_two_ports(self):
+        port1 = self._create_test_port(node_id=self.node.id, id=6,
+                                       address='aa:bb:cc',
+                                       uuid=utils.generate_uuid(),
+                                       extra={'vif_port_id': 'test-vif-A'})
+        port2 = self._create_test_port(node_id=self.node.id, id=7,
+                                       address='dd:ee:ff',
+                                       uuid=utils.generate_uuid(),
+                                       extra={'vif_port_id': 'test-vif-B'})
+        expected = {port1.uuid: 'test-vif-A', port2.uuid: 'test-vif-B'}
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            result = neutron._get_node_vif_ids(task)
+        self.assertEqual(expected, result)
