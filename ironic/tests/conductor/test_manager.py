@@ -321,24 +321,25 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         res = objects.Node.get_by_uuid(self.context, node['uuid'])
         self.assertEqual({'test': 'one'}, res['extra'])
 
-    def test_associate_node_invalid_state(self):
-        node = obj_utils.create_test_node(self.context, driver='fake',
-                                          extra={'test': 'one'},
-                                 instance_uuid=None,
-                                 power_state=states.POWER_ON)
+    def test_deploy_validate_power_state(self):
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_OFF)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  [node.uuid]) as task:
+            self.driver.deploy.validate_power_state(task, 'deploy')
 
-        # check that it fails because state is POWER_ON
-        node.instance_uuid = 'fake-uuid'
-        exc = self.assertRaises(messaging.rpc.ExpectedException,
-                                self.service.update_node,
-                                self.context,
-                                node)
-        # Compare true exception hidden by @messaging.expected_exceptions
-        self.assertEqual(exception.NodeInWrongPowerState, exc.exc_info[0])
-
-        # verify change did not happen
-        node.refresh()
-        self.assertIsNone(node.instance_uuid)
+    def test_deploy_validate_power_state_update_invalid(self):
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_ON)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  [node.uuid]) as task:
+            node.power_state = states.POWER_ON
+            self.assertRaises(exception.NodeInWrongPowerState,
+                              self.driver.deploy.validate_power_state,
+                              task,
+                              'deploy')
 
     def test_associate_node_valid_state(self):
         node = obj_utils.create_test_node(self.context, driver='fake',
@@ -580,6 +581,23 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         # Verify reservation has been cleared.
         self.assertIsNone(node.reservation)
 
+    @mock.patch('ironic.drivers.modules.fake.FakeDeploy.validate_power_state')
+    def test_do_node_deploy_power_validate_fail(self, mock_validate):
+        ndict = utils.get_test_node(driver='fake', power_state=states.POWER_ON)
+        node = self.dbapi.create_node(ndict)
+        # NodeInWrongPowerState should be re-raised as InstanceDeployFailure
+        mock_validate.side_effect = exception.NodeInWrongPowerState(
+            node=node, pstate=node.power_state)
+        exc = self.assertRaises(messaging.rpc.ExpectedException,
+                                self.service.do_node_deploy,
+                                self.context, node.uuid)
+        # Compare true exception hidden by @messaging.client_exceptions
+        self.assertEqual(exception.InstanceDeployFailure, exc.exc_info[0])
+        # This is a sync operation last_error should be None.
+        self.assertIsNone(node.last_error)
+        # Verify reservation has been cleared.
+        self.assertIsNone(node.reservation)
+
     @mock.patch('ironic.drivers.modules.fake.FakeDeploy.deploy')
     def test__do_node_deploy_driver_raises_error(self, mock_deploy):
         # test when driver.deploy.deploy raises an exception
@@ -618,8 +636,10 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         with mock.patch.object(self.service, '_spawn_worker') as mock_spawn:
             mock_spawn.return_value = thread
 
-            node = obj_utils.create_test_node(self.context, driver='fake',
-                                              provision_state=states.NOSTATE)
+            node = obj_utils.create_test_node(self.context,
+                                              driver='fake',
+                                              provision_state=states.NOSTATE,
+                                              power_state=states.POWER_OFF)
 
             self.service.do_node_deploy(self.context, node.uuid)
             self.service._worker_pool.waitall()
@@ -633,7 +653,9 @@ class ManagerTestCase(tests_db_base.DbTestCase):
             mock_spawn.assert_called_once_with(mock.ANY, mock.ANY, mock.ANY)
 
     def test_do_node_deploy_worker_pool_full(self):
-        node = obj_utils.create_test_node(self.context, driver='fake')
+        node = obj_utils.create_test_node(self.context,
+                                          driver='fake',
+                                          power_state=states.POWER_OFF)
         self._start_service()
 
         with mock.patch.object(self.service, '_spawn_worker') as mock_spawn:
@@ -836,6 +858,27 @@ class ManagerTestCase(tests_db_base.DbTestCase):
         # Verify reservation was released.
         node.refresh()
         self.assertIsNone(node.reservation)
+
+    def test_destroy_validate_power_state(self):
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_OFF)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  [node.uuid]) as task:
+
+            self.driver.deploy.validate_power_state(task, 'destroy')
+
+    def test_destroy_validate_power_state_invalid(self):
+        # check that it fails because state is POWER_ON
+        ndict = utils.get_test_node(driver='fake',
+                                    power_state=states.POWER_ON)
+        node = self.dbapi.create_node(ndict)
+        with task_manager.acquire(self.context,
+                                  [node.uuid]) as task:
+            self.assertRaises(exception.NodeInWrongPowerState,
+                              self.driver.deploy.validate_power_state,
+                              task,
+                              'destroy')
 
     @mock.patch.object(timeutils, 'utcnow')
     def test__check_deploy_timeouts_timeout(self, mock_utcnow):
