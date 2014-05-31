@@ -22,7 +22,7 @@ bare metal resources.
 """
 import base64
 import gzip
-import os
+import logging as py_logging
 import tempfile
 
 from ironicclient import exc as ironic_exception
@@ -63,6 +63,8 @@ opts = [
                help='Ironic keystone auth token.'),
     cfg.StrOpt('admin_url',
                help='Keystone public API endpoint.'),
+    cfg.StrOpt('client_log_level',
+               help='Log level override for ironicclient'),
     cfg.StrOpt('pxe_bootfile_name',
                help='This gets passed to Neutron as the bootfile dhcp '
                'parameter when the dhcp_options_enabled is set.',
@@ -181,6 +183,12 @@ class IronicDriver(virt_driver.ComputeDriver):
             extra_specs[keyval[0]] = keyval[1]
 
         self.extra_specs = extra_specs
+
+        icli_log_level = CONF.ironic.client_log_level
+        if icli_log_level:
+            level = py_logging.getLevelName(icli_log_level)
+            logger = py_logging.getLogger('ironicclient')
+            logger.setLevel(level)
 
     def _node_resources_unavailable(self, node_obj):
         """Determines whether the node's resources should be presented
