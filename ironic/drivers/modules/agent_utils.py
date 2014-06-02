@@ -201,7 +201,7 @@ class AgentNeutronAPI(neutron.NeutronAPI):
             if port['network_id'] == CONF.agent.provisioning_network_uuid:
                 # Don't delete the provisioning network here
                 LOG.debug("Ignoring decom port %(port)s for node %(node)s.",
-                          {'port': port['network_id'], 'node': node.uuid})
+                          {'port': port['id'], 'node': node.uuid})
                 continue
             LOG.debug('Unmapping instance port %(vif_port_id)s from node '
                       '%(node_id)s',
