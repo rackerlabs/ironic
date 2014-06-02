@@ -64,13 +64,13 @@ class AgentNeutronAPI(neutron.NeutronAPI):
         """Add the provisioning network to the node."""
         # Make sure the node is not already in the provisioning network
         params = {
-            'switch:hardware_id': node.uuid,
+            'device_id': node.instance_uuid,
         }
         ports = self.client.list_ports(**params).get('ports')
         for port in ports:
             if port['network_id'] == CONF.agent.provisioning_network_uuid:
                 if (port.get('switch:ports') and
-                        port['switch:ports'].get('commit')):
+                        port['switch:ports'].get('commit') is True):
                     LOG.info('Node %s is already on provisioning network',
                               node.uuid)
                     return
@@ -190,7 +190,7 @@ class AgentNeutronAPI(neutron.NeutronAPI):
         # is based on the broken assumption that the number of Neutron ports
         # will match the number of physical ports.
         params = {
-            'switch:hardware_id': node.uuid,
+            'device_id': node.instance_uuid,
         }
         ports = self.client.list_ports(**params).get('ports')
         if not ports:
@@ -200,6 +200,8 @@ class AgentNeutronAPI(neutron.NeutronAPI):
         for port in ports:
             if port['network_id'] == CONF.agent.provisioning_network_uuid:
                 # Don't delete the provisioning network here
+                LOG.debug("Ignoring decom port %(port)s for node %(node)s.",
+                          {'port': port['id'], 'node': node.uuid})
                 continue
             LOG.debug('Unmapping instance port %(vif_port_id)s from node '
                       '%(node_id)s',
