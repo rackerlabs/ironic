@@ -71,6 +71,30 @@ flattened_hardware = {
     'hardware/memory/size': '1024'
 }
 
+alternate_unflattened_hardware = {
+    "hardware": {
+        "disks": [{
+            "uspec": {
+                "links": [
+                    "link1",
+                    "link2"
+                ],
+                "key1":"val2",
+                "key2":"val3",
+            },
+            "key3": "val1"
+        }]
+    }
+}
+
+alternate_flattened_hardware = {
+    'hardware/disks/0/uspec/links/0': 'link1',
+    'hardware/disks/0/uspec/links/1': 'link2',
+    'hardware/disks/0/uspec/key1': 'val2',
+    'hardware/disks/0/uspec/key2': 'val3',
+    'hardware/disks/0/key3': 'val1'
+}
+
 fake_list_ports = {
     'ports': [
         {u'status': u'ACTIVE',
@@ -105,12 +129,20 @@ fake_list_ports = {
 
 class TestAgentDeploy(db_base.DbTestCase):
     def test_flatten_dict(self):
-        flattened = agent_utils.flatten_dict(unflattened_hardware)
-        self.assertEqual(flattened_hardware, flattened)
+        flattened = agent_utils.flatten_dict(alternate_unflattened_hardware)
+        self.assertEqual(alternate_flattened_hardware, flattened)
 
     def test_unflatten_dict(self):
+        unflattened = agent_utils.unflatten_dict(alternate_flattened_hardware)
+        self.assertEqual(alternate_unflattened_hardware, unflattened)
+
+    def test_unflatten_alternate(self):
         unflattened = agent_utils.unflatten_dict(flattened_hardware)
         self.assertEqual(unflattened_hardware, unflattened)
+
+    def test_flatten_alternate(self):
+        flattened = agent_utils.flatten_dict(unflattened_hardware)
+        self.assertEqual(flattened_hardware, flattened)
 
 
 class TestAgentNeutronAPI(db_base.DbTestCase):

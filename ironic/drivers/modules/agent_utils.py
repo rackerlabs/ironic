@@ -283,7 +283,7 @@ def unflatten_dict(flattened, separator='/'):
         for index, key in enumerate(keys):
             try:
                 # List
-                index = int(key)
+                list_index = int(key)
             except ValueError:
                 # Dict
                 if index == len(keys) - 1:
@@ -300,13 +300,16 @@ def unflatten_dict(flattened, separator='/'):
             array = parent_item[parent_key]
 
             # Index out of range
-            if index >= len(array):
+            if list_index >= len(array):
                 # array += [{}] * (index - len(array) + 1)
-                array += [{} for _ in range(index - len(array) + 1)]
+                array += [{} for _ in range(list_index - len(array) + 1)]
 
             # Set the item in the array
-            parent_item = sub_item
-            sub_item = array[index]
-            parent_key = key
+            if index == len(keys) - 1:
+                array[list_index] = v
+            else:
+                parent_item = sub_item
+                sub_item = array[list_index]
+                parent_key = key
 
     return unflattened
