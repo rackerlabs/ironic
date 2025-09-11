@@ -140,6 +140,9 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         system_mock.manufacturer = 'Sushy Emulator'
 
         system_mock.model = 'PowerEdge R1234'
+        system_mock.sku = 'DELL123456'
+
+        system_mock.uuid = '12345678-1234-1234-1234-12345'
 
         return system_mock
 
@@ -187,12 +190,18 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         expected_product_name = 'PowerEdge R1234'
         expected_serial_number = '123456'
         expected_manufacturer = 'Sushy Emulator'
+        expected_sku = 'DELL123456'
+        expected_system_uuid = '12345678-1234-1234-1234-12345'
         self.assertEqual(expected_product_name,
                          system_vendor['product_name'])
         self.assertEqual(expected_serial_number,
                          system_vendor['serial_number'])
         self.assertEqual(expected_manufacturer,
                          system_vendor['manufacturer'])
+        self.assertEqual(expected_sku,
+                         system_vendor['sku'])
+        self.assertEqual(expected_system_uuid,
+                         system_vendor['system_uuid'])
 
         expected_interfaces = [{'mac_address': '00:11:22:33:44:55',
                                 'name': 'NIC.Integrated.1-1'},
@@ -702,6 +711,8 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         system_mock.model = None
         system_mock.serial_number = None
         system_mock.manufacturer = None
+        system_mock.sku = None
+        system_mock.uuid = None
 
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
