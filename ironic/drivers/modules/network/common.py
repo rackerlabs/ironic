@@ -272,6 +272,17 @@ def plug_port_to_tenant_network(task, port_like_obj, client=None):
     binding_profile = {'local_link_information': local_link_info}
     if local_group_info:
         binding_profile['local_group_information'] = local_group_info
+
+    # Include physical_network if available
+    if isinstance(port_like_obj, objects.Portgroup):
+        # For portgroups, get physical_network from the first port
+        pg_ports = [p for p in task.ports
+                    if p.portgroup_id == port_like_obj.id]
+        if pg_ports and pg_ports[0].physical_network:
+            binding_profile['physical_network'] = pg_ports[0].physical_network
+    elif port_like_obj.physical_network:
+        binding_profile['physical_network'] = port_like_obj.physical_network
+
     port_attrs['binding:profile'] = binding_profile
 
     if client_id_opt:
