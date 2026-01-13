@@ -34,6 +34,21 @@ LOG = log.getLogger(__name__)
 TENANT_VIF_KEY = 'tenant_vif_port_id'
 
 
+def _port_category_hack(port_like_obj):
+    """Hack until we get TBN."""
+
+    category = getattr(port_like_obj, "category", "")
+    if category == "network":
+        # if the category is "network", then we want this port
+        return True
+    elif category == "storage":
+        # if the category is "storage", we don't want this port
+        return False
+    else:
+        # if its unset, backwards compat and attempt to use the port
+        return True
+
+
 def _vif_attached(port_like_obj, vif_id):
     """Check if VIF is already attached to a port or portgroup.
 
@@ -129,6 +144,8 @@ def _get_free_portgroups_and_ports(task, vif_id, physnets, vif_info={}):
             non_usable_portgroups.add(p.portgroup_id)
             continue
         if not _is_port_physnet_allowed(p, physnets):
+            continue
+        if not _port_category_hack(p):
             continue
         if p.portgroup_id is None and not portgroup_uuid:
             free_port_like_objs.append(p)
