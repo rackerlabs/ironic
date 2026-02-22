@@ -56,8 +56,7 @@ def _wait_till_realtime_ready(task):
         execute
     """
     # If running without IPA, check that system is ON, if not, turn it on
-    disable_ramdisk = task.node.driver_internal_info.get(
-        'cleaning_disable_ramdisk')
+    disable_ramdisk = deploy_utils.is_ramdisk_disabled(task.node)
     power_state = task.driver.power.get_power_state(task)
     if disable_ramdisk and power_state == states.POWER_OFF:
         task.driver.power.set_power_state(task, states.POWER_ON)
