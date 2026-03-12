@@ -28,7 +28,7 @@ import tenacity
 
 from ironic.common import exception
 from ironic.common.i18n import _
-from ironic.common import utils
+from ironic.common import utils as common_utils
 from ironic.conf import CONF
 from ironic.drivers import utils as driver_utils
 
@@ -117,7 +117,7 @@ def parse_driver_info(node):
                                                  'info': missing_info})
 
     # Validate the Redfish address
-    address = utils.wrap_ipv6(driver_info['redfish_address'])
+    address = common_utils.wrap_ipv6(driver_info['redfish_address'])
     try:
         parsed = rfc3986.uri_reference(address)
     except TypeError:
@@ -509,6 +509,7 @@ def get_enabled_macs(task, system):
                 LOG.warning("Ignoring device for %(node)s as no MAC "
                             "reported", {'node': task.node.uuid})
                 continue
+            nic_mac = common_utils.normalize_mac(nic_mac)
             enabled_macs[nic_mac] = nic_state
 
     if not enabled_macs:
