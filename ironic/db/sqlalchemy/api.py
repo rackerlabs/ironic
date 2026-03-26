@@ -170,13 +170,14 @@ def _get_deploy_template_select_with_steps():
 
 
 def _get_runbook_select_with_steps():
-    """Return a select object for the Runbook joined with steps.
+    """Return a select object for the Runbook joined with steps and traits.
 
     :returns: a select object.
     """
     return sa.select(
         models.Runbook
-    ).options(selectinload(models.Runbook.steps))
+    ).options(selectinload(models.Runbook.steps),
+              selectinload(models.Runbook.traits))
 
 
 def model_query(model, *args, **kwargs):
@@ -2168,6 +2169,53 @@ class Connection(api.Connection):
 
         return total_to_migrate, num_migrated
 
+    def migrate_runbook_names_to_traits(self, context, max_count):
+        """Migrate runbook names to runbook_traits table.
+
+        This migrates existing runbooks that don't have any traits yet by
+        creating a trait entry in runbook_traits that matches the runbook's
+        name. This preserves backward compatibility when the trait matching
+        logic was changed from name-based to trait-based.
+
+        :param context: the admin context
+        :param max_count: The maximum number of objects to migrate. Must be
+                          >= 0. If zero, all the objects will be migrated.
+        :returns: A 2-tuple, 1. the total number of objects that need to be
+                  migrated (at the beginning of this call) and 2. the number
+                  of migrated objects.
+        """
+        with _session_for_write() as session:
+            # Find runbooks that have no traits yet - these need migration
+            # Use a LEFT JOIN to find runbooks without any traits
+            query = (session.query(models.Runbook)
+                     .outerjoin(models.RunbookTrait,
+                                models.Runbook.id
+                                == models.RunbookTrait.runbook_id)
+                     .filter(models.RunbookTrait.runbook_id.is_(None)))
+
+            total_to_migrate = query.count()
+            if not total_to_migrate:
+                return 0, 0
+
+            if max_count and max_count < total_to_migrate:
+                runbooks_to_migrate = query.slice(0, max_count)
+            else:
+                runbooks_to_migrate = query
+
+            num_migrated = 0
+            for runbook in runbooks_to_migrate:
+                # Create a trait entry matching the runbook name
+                trait = models.RunbookTrait(
+                    runbook_id=runbook.id,
+                    trait=runbook.name,
+                    version='1.0')
+                session.add(trait)
+                num_migrated += 1
+
+            session.flush()
+
+        return total_to_migrate, num_migrated
+
     @staticmethod
     def _verify_max_traits_per_node(node_id, num_traits):
         """Verify that an operation would not exceed the per-node trait limit.
@@ -2756,6 +2804,14 @@ class Connection(api.Connection):
     def create_runbook(self, values):
         steps = values.get('steps', [])
         values['steps'] = self._get_runbook_steps(steps)
+        # Deduplicate traits while preserving order so that duplicate values
+        # in a create request do not trigger DBDuplicateEntry on the PK.
+        seen = set()
+        unique_traits = []
+        for t in values.pop('traits', []):
+            if t not in seen:
+                seen.add(t)
+                unique_traits.append(t)
 
         runbook = models.Runbook()
         runbook.update(values)
@@ -2763,13 +2819,21 @@ class Connection(api.Connection):
             try:
                 session.add(runbook)
                 session.flush()
+                # Now add traits using the flushed runbook id
+                for trait in unique_traits:
+                    runbook_trait = models.RunbookTrait(
+                        trait=trait, runbook_id=runbook.id, version='1.0')
+                    session.add(runbook_trait)
+                session.flush()
             except db_exc.DBDuplicateEntry as e:
                 if 'name' in e.columns:
                     raise exception.RunbookDuplicateName(
                         name=values['name'])
                 raise exception.RunbookAlreadyExists(
                     uuid=values['uuid'])
-        return runbook
+        # Re-fetch so that the traits relationship is eagerly loaded within
+        # a fresh read session (the write session above is now closed).
+        return self.get_runbook_by_uuid(runbook.uuid)
 
     def _update_runbook_steps(self, session, runbook_id, steps):
         """Update the steps for a runbook.
@@ -2860,6 +2924,8 @@ class Connection(api.Connection):
         with _session_for_write() as session:
             session.query(models.RunbookStep).filter_by(
                 runbook_id=runbook_id).delete()
+            session.query(models.RunbookTrait).filter_by(
+                runbook_id=runbook_id).delete()
             count = session.query(models.Runbook).filter_by(
                 id=runbook_id).delete()
             if count == 0:
@@ -2891,7 +2957,8 @@ class Connection(api.Connection):
     def get_runbook_list(self, limit=None, marker=None, filters=None,
                          sort_key=None, sort_dir=None):
         query = (sa.select(models.Runbook)
-                 .options(selectinload(models.Runbook.steps)))
+                 .options(selectinload(models.Runbook.steps),
+                          selectinload(models.Runbook.traits)))
         query = self._add_runbooks_filters(query, filters)
         return _paginate_query(models.Runbook, limit, marker,
                                sort_key, sort_dir, query)
@@ -2905,6 +2972,78 @@ class Connection(api.Connection):
                 )
             ).all()
             return [r[0] for r in res]
+
+    def _check_runbook_exists(self, session, runbook_id):
+        if not session.query(models.Runbook).where(
+                models.Runbook.id == runbook_id).scalar():
+            raise exception.RunbookNotFound(runbook=runbook_id)
+
+    @oslo_db_api.retry_on_deadlock
+    def set_runbook_traits(self, runbook_id, traits, version):
+        # Remove duplicate traits
+        traits = set(traits)
+
+        with _session_for_write() as session:
+            # NOTE: Runbook existence is checked in unset_runbook_traits.
+            self.unset_runbook_traits(runbook_id)
+            runbook_traits = []
+            for trait in traits:
+                runbook_trait = models.RunbookTrait(
+                    trait=trait, runbook_id=runbook_id, version=version)
+                session.add(runbook_trait)
+                runbook_traits.append(runbook_trait)
+
+        return runbook_traits
+
+    @oslo_db_api.retry_on_deadlock
+    def unset_runbook_traits(self, runbook_id):
+        with _session_for_write() as session:
+            self._check_runbook_exists(session, runbook_id)
+            session.query(models.RunbookTrait).filter_by(
+                runbook_id=runbook_id).delete()
+
+    def get_runbook_traits_by_runbook_id(self, runbook_id):
+        with _session_for_read() as session:
+            self._check_runbook_exists(session, runbook_id)
+            result = (session.query(models.RunbookTrait)
+                      .filter_by(runbook_id=runbook_id)
+                      .all())
+        return result
+
+    @oslo_db_api.retry_on_deadlock
+    def add_runbook_trait(self, runbook_id, trait, version):
+        runbook_trait = models.RunbookTrait(
+            trait=trait, runbook_id=runbook_id, version=version)
+
+        try:
+            with _session_for_write() as session:
+                self._check_runbook_exists(session, runbook_id)
+                session.add(runbook_trait)
+                session.flush()
+        except db_exc.DBDuplicateEntry:
+            # Ignore duplicate traits
+            pass
+
+        return runbook_trait
+
+    @oslo_db_api.retry_on_deadlock
+    def delete_runbook_trait(self, runbook_id, trait):
+        with _session_for_write() as session:
+            self._check_runbook_exists(session, runbook_id)
+            result = session.query(models.RunbookTrait).filter_by(
+                runbook_id=runbook_id, trait=trait).delete()
+
+        if not result:
+            raise exception.RunbookTraitNotFound(
+                runbook_id=runbook_id, trait=trait)
+
+    def runbook_trait_exists(self, runbook_id, trait):
+        with _session_for_read() as session:
+            self._check_runbook_exists(session, runbook_id)
+            q = session.query(
+                models.RunbookTrait).filter_by(
+                    runbook_id=runbook_id, trait=trait)
+            return session.query(q.exists()).scalar()
 
     @oslo_db_api.retry_on_deadlock
     def create_node_history(self, values):
