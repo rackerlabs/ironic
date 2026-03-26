@@ -1476,6 +1476,68 @@ class Connection(object, metaclass=abc.ABCMeta):
         """
 
     @abc.abstractmethod
+    def set_runbook_traits(self, runbook_id, traits, version):
+        """Replace all of the runbook traits with the specified list.
+
+        This ignores duplicate traits in the specified list.
+
+        :param runbook_id: The id of a runbook.
+        :param traits: List of Strings; traits to set.
+        :param version: version of the RunbookTrait object.
+        :raises: RunbookNotFound if the runbook is not found.
+        """
+
+    @abc.abstractmethod
+    def unset_runbook_traits(self, runbook_id):
+        """Remove all traits of the runbook.
+
+        :param runbook_id: The id of a runbook.
+        :raises: RunbookNotFound if the runbook is not found.
+        """
+
+    @abc.abstractmethod
+    def get_runbook_traits_by_runbook_id(self, runbook_id):
+        """Return a list of traits for the specified runbook.
+
+        :param runbook_id: The id of a runbook.
+        :returns: A list of RunbookTrait objects.
+        :raises: RunbookNotFound if the runbook is not found.
+        """
+
+    @abc.abstractmethod
+    def add_runbook_trait(self, runbook_id, trait, version):
+        """Add a trait to the runbook.
+
+        If the runbook_id and trait pair already exists, this should still
+        succeed.
+
+        :param runbook_id: The id of a runbook.
+        :param trait: A trait string.
+        :param version: version of the RunbookTrait object.
+        :raises: RunbookNotFound if the runbook is not found.
+        """
+
+    @abc.abstractmethod
+    def delete_runbook_trait(self, runbook_id, trait):
+        """Delete the specified trait from the runbook.
+
+        :param runbook_id: The id of a runbook.
+        :param trait: A trait string.
+        :raises: RunbookNotFound if the runbook is not found.
+        :raises: RunbookTraitNotFound if the trait is not found.
+        """
+
+    @abc.abstractmethod
+    def runbook_trait_exists(self, runbook_id, trait):
+        """Check if the specified trait exists on the runbook.
+
+        :param runbook_id: The id of a runbook.
+        :param trait: A trait string.
+        :returns: True if the trait exists otherwise False.
+        :raises: RunbookNotFound if the runbook is not found.
+        """
+
+    @abc.abstractmethod
     def create_node_history(self, values):
         """Create a new history record.
 

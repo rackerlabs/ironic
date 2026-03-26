@@ -1232,16 +1232,49 @@ class ConductorManager(base_manager.BaseConductorManager):
 
         if runbook_ident:
             runbook = self.get_runbook(task.context, runbook_ident)
-            if rb_validate and (runbook.name not in
-                                node.traits.get_trait_names()):
-                msg = _(
-                    "Automated cleaning runbook %(rb)s is not valid for "
-                    "node %(node)s. Runbook name must match a node trait."
-                ) % {'rb': runbook.name, 'node': node.uuid}
-                # NOTE(JayF): Cleaning failures due to misconfiguration
-                #             logged at error, here and below.
-                LOG.error(msg)
-                raise exception.NodeCleaningFailure(node=node, message=msg)
+            if rb_validate:
+                node_trait_names = set(node.traits.get_trait_names())
+
+                if not hasattr(runbook, 'traits'):
+                    # Legacy style: runbook name must match a node trait.
+                    # This handles runbooks that haven't been migrated yet.
+                    if runbook.name not in node_trait_names:
+                        msg = _(
+                            "Automated cleaning runbook %(rb)s is not valid "
+                            "for node %(node)s. Runbook name must match a "
+                            "node trait."
+                        ) % {'rb': runbook.name, 'node': node.uuid}
+                        # NOTE(JayF): Cleaning failures due to
+                        #             misconfiguration logged at error,
+                        #             here and below.
+                        LOG.error(msg)
+                        raise exception.NodeCleaningFailure(
+                            node=node, message=msg)
+                elif runbook.traits:
+                    # v1.112+ style: check intersection of runbook traits
+                    # and node traits.
+                    runbook_traits = set(runbook.traits)
+                    if not (runbook_traits & node_trait_names):
+                        msg = _(
+                            "Automated cleaning runbook %(rb)s is not valid "
+                            "for node %(node)s. None of the runbook's traits "
+                            "%(traits)s match a node trait."
+                        ) % {'rb': runbook.name, 'node': node.uuid,
+                             'traits': sorted(runbook_traits)}
+                        LOG.error(msg)
+                        raise exception.NodeCleaningFailure(
+                            node=node, message=msg)
+                else:
+                    # Edge case: runbook has traits attribute but no traits.
+                    # This means it's a new runbook with empty traits list.
+                    # No node can match a runbook with no traits.
+                    msg = _(
+                        "Automated cleaning runbook %(rb)s is not valid "
+                        "for node %(node)s. Runbook has no traits configured."
+                    ) % {'rb': runbook.name, 'node': node.uuid}
+                    LOG.error(msg)
+                    raise exception.NodeCleaningFailure(
+                        node=node, message=msg)
 
             return convert_steps(runbook.steps), runbook.disable_ramdisk
         elif rb_source == automated_clean_methods.RUNBOOK:

@@ -7510,7 +7510,8 @@ ORHMKeXMO8fcK0By7CiMKwHSXCoEQgfQhWwpMdSsO8LgHCjh87DQc= """
                 "order": 1}
 
         runbook = mock.Mock()
-        runbook.name = 'CUSTOM_1'
+        runbook.name = 'my-clean-runbook'
+        runbook.traits = ['CUSTOM_1']
         runbook.steps = [step]
         mock_policy.return_value = runbook
         ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
@@ -7538,6 +7539,7 @@ ORHMKeXMO8fcK0By7CiMKwHSXCoEQgfQhWwpMdSsO8LgHCjh87DQc= """
 
         runbook = mock.Mock()
         runbook.name = 'CUSTOM_1'
+        runbook.traits = ['CUSTOM_1']
         runbook.steps = [{'step': 'meow', 'interface': 'raid', 'args': {},
                           'order': 1}]
         mock_policy.return_value = runbook
@@ -7561,6 +7563,7 @@ ORHMKeXMO8fcK0By7CiMKwHSXCoEQgfQhWwpMdSsO8LgHCjh87DQc= """
 
         runbook = mock.Mock()
         runbook.name = 'CUSTOM_1'
+        runbook.traits = ['CUSTOM_1']
         runbook.steps = [{'step': 'meow', 'interface': 'deploy', 'args': {},
                           'order': 1}]
         mock_policy.return_value = runbook
@@ -7572,6 +7575,117 @@ ORHMKeXMO8fcK0By7CiMKwHSXCoEQgfQhWwpMdSsO8LgHCjh87DQc= """
                             headers={api_base.Version.string:
                                      str(api_v1.max_version())})
         self.assertEqual(http_client.BAD_REQUEST, ret.status_int)
+
+    # ---- v1.112 runbook-traits intersection tests --------------------------
+
+    @mock.patch.object(api_utils, 'check_runbook_policy_and_retrieve',
+                       autospec=True)
+    @mock.patch.object(rpcapi.ConductorAPI, 'do_node_service', autospec=True)
+    def test_service_with_runbook_traits_v112_approved(
+            self, mock_dns, mock_policy):
+        """v1.112: node has a matching runbook trait, service is accepted."""
+        objects.TraitList.create(self.context, self.node.id, ['CUSTOM_X'])
+        self.node.refresh()
+        self.node.provision_state = states.SERVICEHOLD
+        self.node.save()
+
+        runbook = mock.Mock()
+        runbook.name = 'my-runbook'
+        runbook.traits = ['CUSTOM_X', 'CUSTOM_Y']
+        runbook.steps = [{"step": "upgrade_firmware",
+                          "interface": "deploy", "args": {}}]
+        runbook.disable_ramdisk = False
+        mock_policy.return_value = runbook
+
+        ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
+                            {'target': states.VERBS['service'],
+                             'runbook': runbook.name},
+                            headers={api_base.Version.string: '1.112'})
+        self.assertEqual(http_client.ACCEPTED, ret.status_code)
+        mock_dns.assert_called_once_with(mock.ANY, mock.ANY,
+                                         self.node.uuid, runbook.steps,
+                                         mock.ANY, topic='test-topic')
+
+    @mock.patch.object(api_utils, 'check_runbook_policy_and_retrieve',
+                       autospec=True)
+    def test_service_with_runbook_traits_v112_no_intersection(
+            self, mock_policy):
+        """v1.112: runbook traits have no overlap with node traits, 400."""
+        objects.TraitList.create(self.context, self.node.id, ['CUSTOM_A'])
+        self.node.refresh()
+        self.node.provision_state = states.SERVICEHOLD
+        self.node.save()
+
+        runbook = mock.Mock()
+        runbook.name = 'my-runbook'
+        runbook.traits = ['CUSTOM_X', 'CUSTOM_Y']
+        runbook.steps = [{"step": "upgrade_firmware",
+                          "interface": "deploy", "args": {}}]
+        runbook.disable_ramdisk = False
+        mock_policy.return_value = runbook
+
+        ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
+                            {'target': states.VERBS['service'],
+                             'runbook': runbook.name},
+                            expect_errors=True,
+                            headers={api_base.Version.string: '1.112'})
+        self.assertEqual(http_client.BAD_REQUEST, ret.status_int)
+
+    @mock.patch.object(api_utils, 'check_runbook_policy_and_retrieve',
+                       autospec=True)
+    def test_service_with_runbook_traits_v112_no_traits_on_runbook(
+            self, mock_policy):
+        """v1.112: runbook has no traits configured, returns 400."""
+        objects.TraitList.create(self.context, self.node.id, ['CUSTOM_A'])
+        self.node.refresh()
+        self.node.provision_state = states.SERVICEHOLD
+        self.node.save()
+
+        runbook = mock.Mock()
+        runbook.name = 'my-runbook'
+        runbook.traits = []
+        runbook.steps = [{"step": "upgrade_firmware",
+                          "interface": "deploy", "args": {}}]
+        runbook.disable_ramdisk = False
+        mock_policy.return_value = runbook
+
+        ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
+                            {'target': states.VERBS['service'],
+                             'runbook': runbook.name},
+                            expect_errors=True,
+                            headers={api_base.Version.string: '1.112'})
+        self.assertEqual(http_client.BAD_REQUEST, ret.status_int)
+
+    @mock.patch.object(api_utils, 'check_runbook_policy_and_retrieve',
+                       autospec=True)
+    @mock.patch.object(rpcapi.ConductorAPI, 'do_node_clean', autospec=True)
+    @mock.patch.object(api_node, '_check_clean_steps', autospec=True)
+    def test_clean_with_runbook_traits_v112_approved(
+            self, mock_check, mock_rpcapi, mock_policy):
+        """v1.112: node has a matching runbook trait, clean is accepted."""
+        objects.TraitList.create(self.context, self.node.id, ['CUSTOM_X'])
+        self.node.refresh()
+        self.node.provision_state = states.MANAGEABLE
+        self.node.save()
+
+        step = {"step": "configure_raid", "interface": "raid",
+                "args": {}, "order": 1}
+        runbook = mock.Mock()
+        runbook.name = 'my-cleaning-runbook'
+        runbook.traits = ['CUSTOM_X']
+        runbook.steps = [step]
+        runbook.disable_ramdisk = None
+        mock_policy.return_value = runbook
+
+        ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
+                            {'target': states.VERBS['clean'],
+                             'runbook': runbook.name},
+                            headers={api_base.Version.string: '1.112'})
+        self.assertEqual(http_client.ACCEPTED, ret.status_code)
+        mock_check.assert_called_once_with(runbook.steps)
+        mock_rpcapi.assert_called_once_with(mock.ANY, mock.ANY,
+                                            self.node.uuid, runbook.steps,
+                                            mock.ANY, topic='test-topic')
 
 
 class TestCheckCleanSteps(db_base.DbTestCase):

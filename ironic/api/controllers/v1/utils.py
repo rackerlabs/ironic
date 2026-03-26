@@ -1691,6 +1691,16 @@ def allow_runbooks():
     return api.request.version.minor >= versions.MINOR_92_RUNBOOKS
 
 
+def allow_runbook_traits():
+    """Check if runbook traits endpoints and fields are allowed.
+
+    Version 1.112 of the API added traits support to runbooks: the traits
+    set on a runbook controls which nodes are permitted to execute it, the
+    name constraint is relaxed, and a description field is available.
+    """
+    return api.request.version.minor >= versions.MINOR_112_RUNBOOK_TRAITS
+
+
 def allow_inspection_rules():
     """Check if accessing inspection rule endpoints is allowed.
 
