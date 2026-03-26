@@ -114,10 +114,12 @@ class ReleaseMappingsTestCase(base.TestCase):
         # NodeBase is also excluded as it is covered by Node.
         exceptions = set(['NodeTag', 'ConductorHardwareInterfaces',
                           'NodeTrait', 'DeployTemplateStep',
-                          'NodeBase', 'RunbookStep'])
+                          'NodeBase', 'RunbookStep', 'RunbookTrait'])
         model_names -= exceptions
         # NodeTrait maps to two objects
         model_names |= set(['Trait', 'TraitList'])
+        # RunbookTrait maps to two objects
+        model_names |= set(['RunbookTrait', 'RunbookTraitList'])
         # Deployment is purely virtual.
         model_names.add('Deployment')
         object_names = set(

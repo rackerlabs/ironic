@@ -2,6 +2,32 @@
 REST API Version History
 ========================
 
+1.112 (Hibiscus)
+----------------------
+
+Add runbook traits support:
+
+* Runbooks now carry a ``traits`` set (list of custom trait strings).
+  When executing a runbook on a node, the system checks that the node
+  has at least one trait that intersects with the runbook's traits set.
+  This replaces the previous requirement that the runbook ``name``
+  must exactly match a node trait.
+* The runbook ``name`` may now be any valid logical name string (letters,
+  digits, hyphens, dots, underscores; 1–255 characters). The old
+  constraint that names must follow the trait format (``CUSTOM_*`` or
+  an ``os-traits`` standard trait) is lifted.
+* New sub-resource ``/v1/runbooks/{ident}/traits`` with endpoints:
+
+  * ``GET`` – list the runbook's traits
+  * ``PUT`` – replace all traits (body: ``{"traits": [...]}``), or add a
+    single trait (``PUT /v1/runbooks/{ident}/traits/{trait}`` with no body)
+  * ``DELETE /v1/runbooks/{ident}/traits/{trait}`` – remove a single trait
+
+Add runbook description field:
+
+* A ``description`` field (nullable string, max 255 characters) is added
+  to runbooks, consistent with other Ironic objects.
+
 1.111 (Gazpacho)
 ----------------------
 

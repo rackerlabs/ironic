@@ -299,3 +299,115 @@ class MigrateToBuiltinInspectionTestCase(base.DbTestCase):
         self.assertEqual(3, total)
         self.assertEqual(2, migrated)
         self._check(4, 1)
+
+
+class MigrateRunbookNamesToTraitsTestCase(base.DbTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.context = context.get_admin_context()
+        self.dbapi = db_api.get_instance()
+
+        # Create test runbooks without traits (simulating pre-migration state)
+        self.runbook1 = utils.create_test_runbook(
+            name='CUSTOM_FIRMWARE_UPDATE',
+            uuid=uuidutils.generate_uuid())
+        self.runbook2 = utils.create_test_runbook(
+            name='CUSTOM_BIOS_CONFIG',
+            uuid=uuidutils.generate_uuid())
+        self.runbook3 = utils.create_test_runbook(
+            name='HW_CPU_X86_VMX',
+            uuid=uuidutils.generate_uuid())
+
+    def _check_traits_migrated(self, runbook_id, expected_trait):
+        """Helper to verify a runbook has the expected trait."""
+        traits = self.dbapi.get_runbook_traits_by_runbook_id(runbook_id)
+        self.assertEqual(1, len(traits))
+        self.assertEqual(expected_trait, traits[0].trait)
+
+    def test_migrate_all_runbooks(self):
+        """Test migrating all runbooks without limits."""
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+
+        self.assertEqual(3, total)
+        self.assertEqual(3, migrated)
+
+        # Verify all runbooks got their traits
+        self._check_traits_migrated(self.runbook1['id'],
+                                    'CUSTOM_FIRMWARE_UPDATE')
+        self._check_traits_migrated(self.runbook2['id'], 'CUSTOM_BIOS_CONFIG')
+        self._check_traits_migrated(self.runbook3['id'], 'HW_CPU_X86_VMX')
+
+    def test_migrate_with_limit(self):
+        """Test migrating with a limit on number of runbooks."""
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 2)
+
+        self.assertEqual(3, total)
+        self.assertEqual(2, migrated)
+
+        # Should have 2 runbooks with traits and 1 without
+        all_traits = []
+        runbook_ids = [self.runbook1['id'], self.runbook2['id'],
+                       self.runbook3['id']]
+        for runbook_id in runbook_ids:
+            traits = self.dbapi.get_runbook_traits_by_runbook_id(runbook_id)
+            all_traits.append(len(traits))
+
+        # Should have exactly 2 runbooks with traits (1 trait each) and 1
+        # without
+        self.assertEqual([0, 1, 1], sorted(all_traits))
+
+    def test_migrate_already_migrated(self):
+        """Test that already migrated runbooks are not migrated again."""
+        # First migration
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+        self.assertEqual(3, total)
+        self.assertEqual(3, migrated)
+
+        # Second migration should find nothing to do
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+        self.assertEqual(0, total)
+        self.assertEqual(0, migrated)
+
+    def test_migrate_partial_then_complete(self):
+        """Test completing migration after partial migration."""
+        # Partial migration
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 1)
+        self.assertEqual(3, total)
+        self.assertEqual(1, migrated)
+
+        # Complete the migration
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+        self.assertEqual(2, total)  # 2 remaining
+        self.assertEqual(2, migrated)
+
+        # Verify all are now migrated
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+        self.assertEqual(0, total)
+        self.assertEqual(0, migrated)
+
+    def test_migrate_mixed_runbooks(self):
+        """Test migration with mix of migrated and unmigrated runbooks."""
+        # Manually add traits to one runbook (simulate partially migrated
+        # state)
+        self.dbapi.add_runbook_trait(
+            self.runbook1['id'], 'MANUAL_TRAIT', '1.0')
+
+        # Now migrate - should only migrate the 2 without traits
+        total, migrated = self.dbapi.migrate_runbook_names_to_traits(
+            self.context, 0)
+        self.assertEqual(2, total)
+        self.assertEqual(2, migrated)
+
+        # Verify the manually added trait wasn't touched
+        traits = self.dbapi.get_runbook_traits_by_runbook_id(
+            self.runbook1['id'])
+        self.assertEqual(1, len(traits))
+        self.assertEqual('MANUAL_TRAIT', traits[0].trait)

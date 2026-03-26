@@ -1015,13 +1015,34 @@ class NodeStatesController(rest.RestController):
 
         traits = objects.TraitList.get_by_node_id(api.request.context,
                                                   rpc_node.id)
-        node_traits = traits.get_trait_names() or []
-        if rpc_runbook.name not in node_traits:
-            msg = (_('This runbook has not been approved for '
-                     'use on this node %s. Please ask an administrator '
-                     'to add it to your node traits.') % rpc_node.uuid)
-            raise exception.ClientSideError(
-                msg, status_code=http_client.BAD_REQUEST)
+        node_traits = set(traits.get_trait_names() or [])
+        if api_utils.allow_runbook_traits():
+            # v1.112+: check that the node has at least one trait that
+            # appears in the runbook's traits set.
+            runbook_traits = set(rpc_runbook.traits)
+            if not runbook_traits:
+                msg = (_('Runbook %s has no traits configured. Please ask '
+                         'an administrator to add traits to the runbook.')
+                       % rpc_runbook.uuid)
+                raise exception.ClientSideError(
+                    msg, status_code=http_client.BAD_REQUEST)
+            if not (runbook_traits & node_traits):
+                msg = (_('This runbook has not been approved for '
+                         'use on this node %(node)s. The node does not have '
+                         'any of the runbook\'s traits %(traits)s. Please '
+                         'ask an administrator to add a matching trait to '
+                         'your node.') % {'node': rpc_node.uuid,
+                                          'traits': sorted(runbook_traits)})
+                raise exception.ClientSideError(
+                    msg, status_code=http_client.BAD_REQUEST)
+        else:
+            # Legacy (< v1.112): the runbook name must match a node trait.
+            if rpc_runbook.name not in node_traits:
+                msg = (_('This runbook has not been approved for '
+                         'use on this node %s. Please ask an administrator '
+                         'to add it to your node traits.') % rpc_node.uuid)
+                raise exception.ClientSideError(
+                    msg, status_code=http_client.BAD_REQUEST)
 
         disable_ramdisk = rpc_runbook.disable_ramdisk
         if target == ir_states.VERBS['clean']:

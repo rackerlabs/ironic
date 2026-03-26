@@ -1124,3 +1124,326 @@ class TestDelete(BaseRunbooksAPITest):
         res = self.delete('/runbooks/%s' % 'blah', expect_errors=True,
                           headers=self.headers)
         self.assertEqual(http_client.NOT_FOUND, res.status_code)
+
+
+# v1.112 API version header used throughout the traits tests.
+V112_HEADERS = {api_base.Version.string: '1.112'}
+# A version prior to v1.112, used to test that traits endpoints are absent.
+PRE_V112_HEADERS = {api_base.Version.string: '1.111'}
+
+
+class TestRunbookTraitsController(BaseRunbooksAPITest):
+    """Tests for runbook features introduced in API v1.112."""
+
+    def setUp(self):
+        super(TestRunbookTraitsController, self).setUp()
+        self.runbook = obj_utils.create_test_runbook(
+            self.context, name='CUSTOM_DT1')
+
+    # ------------------------------------------------------------------ GET --
+
+    def test_get_traits_empty(self):
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual({'traits': []}, data)
+
+    def test_get_traits_with_values(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A', 'CUSTOM_B'])
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertCountEqual(['CUSTOM_A', 'CUSTOM_B'], data['traits'])
+
+    def test_get_traits_by_name(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A'])
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.name,
+            headers=V112_HEADERS)
+        self.assertEqual(['CUSTOM_A'], data['traits'])
+
+    def test_get_traits_old_api_version_not_found(self):
+        response = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=PRE_V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    def test_get_traits_runbook_not_found(self):
+        response = self.get_json(
+            '/runbooks/%s/traits' % uuidutils.generate_uuid(),
+            headers=V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    # ------------------------------------------------- PUT (replace all) ----
+
+    def test_put_traits_replace_all(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_OLD'])
+        response = self.put_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            {'traits': ['CUSTOM_NEW1', 'CUSTOM_NEW2']},
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertCountEqual(['CUSTOM_NEW1', 'CUSTOM_NEW2'], data['traits'])
+
+    def test_put_traits_replace_all_empty(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_OLD'])
+        response = self.put_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            {'traits': []},
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual([], data['traits'])
+
+    def test_put_single_trait(self):
+        response = self.put_json(
+            '/runbooks/%s/traits/CUSTOM_A' % self.runbook.uuid,
+            {},
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertIn('CUSTOM_A', data['traits'])
+
+    def test_put_single_trait_preserves_existing(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_EXISTING'])
+        response = self.put_json(
+            '/runbooks/%s/traits/CUSTOM_NEW' % self.runbook.uuid,
+            {},
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertCountEqual(['CUSTOM_EXISTING', 'CUSTOM_NEW'],
+                              data['traits'])
+
+    def test_put_traits_old_api_version_not_found(self):
+        response = self.put_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            {'traits': ['CUSTOM_A']},
+            headers=PRE_V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    def test_put_traits_runbook_not_found(self):
+        response = self.put_json(
+            '/runbooks/%s/traits' % uuidutils.generate_uuid(),
+            {'traits': ['CUSTOM_A']},
+            headers=V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    # ----------------------------------------------------------- DELETE ------
+
+    def test_delete_all_traits(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A', 'CUSTOM_B'])
+        response = self.delete(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual([], data['traits'])
+
+    def test_delete_single_trait(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A', 'CUSTOM_B'])
+        response = self.delete(
+            '/runbooks/%s/traits/CUSTOM_A' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual(['CUSTOM_B'], data['traits'])
+
+    def test_delete_nonexistent_trait_is_noop(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A'])
+        response = self.delete(
+            '/runbooks/%s/traits/CUSTOM_MISSING' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual(http_client.NO_CONTENT, response.status_int)
+        data = self.get_json(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=V112_HEADERS)
+        self.assertEqual(['CUSTOM_A'], data['traits'])
+
+    def test_delete_traits_old_api_version_not_found(self):
+        response = self.delete(
+            '/runbooks/%s/traits' % self.runbook.uuid,
+            headers=PRE_V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    def test_delete_traits_runbook_not_found(self):
+        response = self.delete(
+            '/runbooks/%s/traits' % uuidutils.generate_uuid(),
+            headers=V112_HEADERS,
+            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, response.status_int)
+
+    # ------------------------------------------------- create (POST) --------
+
+    def test_create_with_non_trait_name_v112(self):
+        """v1.112 allows logical names that are not valid trait names."""
+        tdict = test_api_utils.post_get_test_runbook(name='my-runbook-2025')
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS)
+        self.assertEqual(http_client.CREATED, response.status_int)
+        self.assertEqual('my-runbook-2025', response.json['name'])
+
+    def test_create_with_traits_v112_rejected(self):
+        """Runbooks created via v1.112 cannot supply traits.
+
+        Use /traits sub-resource instead.
+        """
+        tdict = test_api_utils.post_get_test_runbook(name='my-traits-rb')
+        tdict['traits'] = ['CUSTOM_FOO', 'CUSTOM_BAR']
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS,
+                                  expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+        self.assertIn('traits', response.json['error_message'])
+
+    def test_create_with_description_v112(self):
+        tdict = test_api_utils.post_get_test_runbook(name='CUSTOM_DESC_RB')
+        tdict['description'] = 'A test runbook'
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS)
+        self.assertEqual(http_client.CREATED, response.status_int)
+        self.assertEqual('A test runbook', response.json['description'])
+
+    def test_create_description_too_long_v112(self):
+        tdict = test_api_utils.post_get_test_runbook(name='CUSTOM_LONG_DESC')
+        tdict['description'] = 'X' * 256
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS,
+                                  expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+
+    def test_create_name_too_long_v112(self):
+        tdict = test_api_utils.post_get_test_runbook(name='X' * 256)
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS,
+                                  expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+
+    def test_create_name_with_space_rejected_v112(self):
+        """Names with spaces are not valid logical names; must be rejected."""
+        tdict = test_api_utils.post_get_test_runbook(name='My Runbook')
+        response = self.post_json('/runbooks', tdict, headers=V112_HEADERS,
+                                  expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+
+    def test_create_traits_not_allowed_pre_v112(self):
+        """traits field must not be accepted in API versions < 1.112."""
+        tdict = test_api_utils.post_get_test_runbook()
+        tdict['traits'] = ['CUSTOM_FOO']
+        response = self.post_json('/runbooks', tdict,
+                                  headers=PRE_V112_HEADERS,
+                                  expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+
+    # ---------------------------------------------------- get / list --------
+
+    def test_get_one_includes_traits_v112(self):
+        objects.RunbookTraitList.create(
+            self.context, self.runbook.id, ['CUSTOM_A'])
+        data = self.get_json('/runbooks/%s' % self.runbook.uuid,
+                             headers=V112_HEADERS)
+        self.assertIn('traits', data)
+        self.assertEqual(['CUSTOM_A'], data['traits'])
+
+    def test_get_one_includes_description_v112(self):
+        data = self.get_json('/runbooks/%s' % self.runbook.uuid,
+                             headers=V112_HEADERS)
+        self.assertIn('description', data)
+
+    def test_description_absent_in_response_pre_v112(self):
+        """description field must NOT appear for API versions < 1.112."""
+        data = self.get_json('/runbooks/%s' % self.runbook.uuid,
+                             headers=PRE_V112_HEADERS)
+        self.assertNotIn('description', data)
+
+    def test_traits_absent_in_response_pre_v112(self):
+        """traits field should NOT appear for API versions < 1.112."""
+        data = self.get_json('/runbooks/%s' % self.runbook.uuid,
+                             headers=PRE_V112_HEADERS)
+        self.assertNotIn('traits', data)
+
+    def test_sort_key_traits_invalid(self):
+        """'traits' must not be accepted as a sort key."""
+        response = self.get_json('/runbooks?sort_key=traits',
+                                 headers=V112_HEADERS,
+                                 expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_int)
+        self.assertIn('traits', response.json['error_message'])
+
+    # ---------------------------------------------------- patch (PATCH) ------
+
+    @mock.patch.object(objects.Runbook, 'save', autospec=True)
+    def test_patch_description_v112(self, mock_save):
+        runbook = obj_utils.create_test_runbook(
+            self.context, name='CUSTOM_PATCH_DESC')
+        patch = [{'path': '/description', 'value': 'new desc', 'op': 'add'}]
+        response = self.patch_json('/runbooks/%s' % runbook.uuid,
+                                   patch, headers=V112_HEADERS)
+        self.assertEqual(http_client.OK, response.status_code)
+        self.assertEqual('new desc', response.json['description'])
+        mock_save.assert_called_once_with(mock.ANY)
+
+    @mock.patch.object(objects.Runbook, 'save', autospec=True)
+    def test_patch_non_trait_name_v112(self, mock_save):
+        """v1.112 should accept renaming a runbook to a non-trait string."""
+        runbook = obj_utils.create_test_runbook(
+            self.context, name='CUSTOM_OLD_NAME')
+        patch = [{'path': '/name', 'value': 'new-name-2025', 'op': 'replace'}]
+        response = self.patch_json('/runbooks/%s' % runbook.uuid,
+                                   patch, headers=V112_HEADERS)
+        self.assertEqual(http_client.OK, response.status_code)
+        self.assertEqual('new-name-2025', response.json['name'])
+
+    @mock.patch.object(objects.Runbook, 'save', autospec=True)
+    def test_patch_traits_not_allowed_v112(self, mock_save):
+        """Traits are not patchable; the /traits sub-resource must be used."""
+        runbook = obj_utils.create_test_runbook(
+            self.context, name='CUSTOM_PATCH_TRAITS')
+        patch = [{'path': '/traits', 'value': ['CUSTOM_X'], 'op': 'replace'}]
+        response = self.patch_json('/runbooks/%s' % runbook.uuid,
+                                   patch, headers=V112_HEADERS,
+                                   expect_errors=True)
+        self.assertEqual(http_client.BAD_REQUEST, response.status_code)
+        self.assertFalse(mock_save.called)
+
+    # ------------------------------------ backwards compatibility --------
+
+    def test_v112_name_readable_pre_v112(self):
+        """A v1.112-style name is still GET-able on older APIs."""
+        runbook = obj_utils.create_test_runbook(
+            self.context, name='my-runbook-2025')
+        data = self.get_json('/runbooks/%s' % runbook.uuid,
+                             headers=PRE_V112_HEADERS)
+        self.assertEqual('my-runbook-2025', data['name'])
+
+    @mock.patch.object(objects.Runbook, 'save', autospec=True)
+    def test_v112_name_editable_pre_v112(self, mock_save):
+        """Non-name fields of a v1.112-named runbook are patchable."""
+        runbook = obj_utils.create_test_runbook(
+            self.context, name='my-runbook-2025')
+        patch = [{'path': '/extra', 'value': {'k': 'v'}, 'op': 'add'}]
+        response = self.patch_json('/runbooks/%s' % runbook.uuid,
+                                   patch, headers=PRE_V112_HEADERS)
+        self.assertEqual(http_client.OK, response.status_code)
+        mock_save.assert_called_once_with(mock.ANY)

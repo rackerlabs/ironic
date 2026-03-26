@@ -832,6 +832,10 @@ class RunbookNotFound(NotFound):
     _msg_fmt = _("Runbook %(runbook)s could not be found.")
 
 
+class RunbookTraitNotFound(NotFound):
+    _msg_fmt = _("Runbook %(runbook_id)s doesn't have a trait '%(trait)s'")
+
+
 class InvalidRunbook(Invalid):
     _msg_fmt = _("Runbook invalid: %(err)s.")
 

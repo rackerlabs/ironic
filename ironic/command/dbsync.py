@@ -65,6 +65,7 @@ dbapi = db_api.get_instance()
 # by doing getattr on the object
 ONLINE_MIGRATIONS = (
     (dbapi, 'migrate_to_builtin_inspection'),
+    (dbapi, 'migrate_runbook_names_to_traits'),
     # NOTE(rloo): Don't remove this; it should always be last
     (dbapi, 'update_to_latest_versions'),
 )
