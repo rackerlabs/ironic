@@ -538,12 +538,17 @@ class Runbook(Base):
     id = Column(Integer, primary_key=True)
     uuid = Column(String(36))
     name = Column(String(255), nullable=False)
+    description = Column(String(255), nullable=True)
     public = Column(Boolean, default=False)
     owner = Column(String(255), nullable=True)
     disable_ramdisk = Column(Boolean, default=False)
     extra = Column(db_types.JsonEncodedDict)
     steps: orm.Mapped[List['RunbookStep']] = orm.relationship(  # noqa
         "RunbookStep",
+        back_populates="runbook",
+        lazy="selectin")
+    traits: orm.Mapped[List['RunbookTrait']] = orm.relationship(  # noqa
+        "RunbookTrait",
         back_populates="runbook",
         lazy="selectin")
 
@@ -569,6 +574,24 @@ class RunbookStep(Base):
             'and_(RunbookStep.runbook_id == '
             'Runbook.id)'),
         foreign_keys=runbook_id
+    )
+
+
+class RunbookTrait(Base):
+    """Represents a trait associated with a runbook."""
+
+    __tablename__ = 'runbook_traits'
+    __table_args__ = (
+        Index('runbook_traits_idx', 'trait'),
+        table_args())
+    runbook_id = Column(Integer, ForeignKey('runbooks.id'),
+                        primary_key=True, nullable=False)
+    trait = Column(String(255), primary_key=True, nullable=False)
+    runbook = orm.relationship(
+        "Runbook",
+        primaryjoin='and_(RunbookTrait.runbook_id == Runbook.id)',
+        foreign_keys=runbook_id,
+        back_populates="traits"
     )
 
 

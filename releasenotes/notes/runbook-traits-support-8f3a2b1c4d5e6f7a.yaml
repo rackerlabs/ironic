@@ -1,0 +1,40 @@
+---
+features:
+  - |
+    Adds a ``traits`` field to runbooks, decoupling runbook eligibility from
+    the runbook name. A runbook may now have any logical name; the set of
+    traits on the runbook determines which nodes are permitted to use it.
+    API microversion 1.112 is required to use this feature.
+  - |
+    Adds a ``description`` field to runbooks, consistent with other Ironic
+    objects. The field is available from API microversion 1.112 onwards and
+    is included in the runbook body when retrieved via the API.
+  - |
+    Adds new REST API endpoints for managing runbook traits:
+
+    * ``GET /v1/runbooks/{ident}/traits`` — list all traits for a runbook.
+    * ``PUT /v1/runbooks/{ident}/traits`` — replace all traits for a runbook.
+    * ``PUT /v1/runbooks/{ident}/traits/{trait}`` — add a single trait.
+    * ``DELETE /v1/runbooks/{ident}/traits`` — remove all traits.
+    * ``DELETE /v1/runbooks/{ident}/traits/{trait}`` — remove a single trait.
+
+    These endpoints are available from API microversion 1.112.
+  - |
+    Runbook names are no longer required to be valid OpenStack trait strings
+    when using API microversion 1.112 or later. Any string of 1–255 characters
+    is now accepted as a runbook name.
+upgrade:
+  - |
+    An online data migration (``migrate_runbook_names_to_traits``) seeds the
+    ``runbook_traits`` table from the current runbook names. This migration
+    runs as part of ``ironic-dbsync online_data_migrations`` and can be
+    executed in batches while the service is running. Existing runbooks whose
+    names were valid trait strings will continue to match nodes via the new
+    trait-based mechanism. Runbooks created before API microversion 1.112 are
+    not affected by the node matching logic change until they are updated via
+    the new traits endpoints.
+  - |
+    A quirk to note for users of the new runbook traits. Runbooks created
+    using API microversion >=1.112, then later viewed with API microversions
+    <1.112, may have names that do not conform to the custom traits schema
+    (CUSTOM_*) previously enforced for runbook names.
