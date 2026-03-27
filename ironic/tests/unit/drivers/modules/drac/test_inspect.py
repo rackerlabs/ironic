@@ -86,7 +86,9 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
         system_mock.identity = 'System.Embedded.1'
         return system_mock
 
-    def _setup_dell_connection_mock(self, system_mock, url='https://bmc.example.com/redfish/v1'):
+    def _setup_dell_connection_mock(self, system_mock,
+                                    url='https://bmc.example.com'
+                                        '/redfish/v1'):
         """Helper to setup Dell connection mock for LLDP tests."""
         mock_conn = mock.MagicMock()
         mock_conn._url = url
@@ -180,61 +182,35 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
                                   shared=True) as task:
             return_value = task.driver.inspect._get_mac_address(task)
             self.assertEqual(expected_value, return_value)
-    @mock.patch.object(inspect_utils, 'store_inspection_data', autospec=True)
-    @mock.patch.object(inspect_utils, 'get_inspection_data', autospec=True)
-    @mock.patch.object(redfish_inspect.RedfishInspect, 'inspect_hardware',
-                       autospec=True)
-    @mock.patch.object(inspect_utils, 'create_ports_if_not_exist',
-                       autospec=True)
+
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
-    def test_inspect_hardware_sku_as_serial(
-            self, mock_get_system, mock_create_ports,
-            mock_parent_inspect, mock_get_data, mock_store_data):
+    def test_get_system_vendor_info_sku_as_serial(self, mock_get_system):
         """Test that Dell SKU (service tag) is used as serial_number.
 
         Dell systems report the motherboard serial in serial_number and the
         actual service tag in SKU. This test verifies that iDRAC inspection
-        uses the SKU as the serial_number in the inspection data.
+        uses the SKU as the serial_number in the system vendor info.
         """
         system_mock = self.init_system_mock(mock_get_system.return_value)
-        # Dell reports motherboard serial in serial_number
         system_mock.serial_number = 'MOBO123456'
-        # Dell service tag is in SKU - this is what we want as serial
         system_mock.sku = 'DELL-SVC-TAG'
-
-        mock_parent_inspect.return_value = states.MANAGEABLE
-        mock_get_data.return_value = {
-            'inventory': {
-                'system_vendor': {
-                    'serial_number': 'MOBO123456',
-                    'manufacturer': 'Dell Inc.',
-                    'product_name': 'PowerEdge R640'
-                }
-            },
-            'plugin_data': {}
-        }
+        system_mock.manufacturer = 'Dell Inc.'
+        system_mock.model = 'PowerEdge R640'
+        system_mock.uuid = '12345678-1234-1234-1234-123456789abc'
 
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
-            task.driver.inspect._get_mac_address = mock.Mock(return_value={})
-            result = task.driver.inspect.inspect_hardware(task)
+            system = redfish_utils.get_system(task.node)
+            result = task.driver.inspect._get_system_vendor_info(
+                task, system)
 
-            self.assertEqual(states.MANAGEABLE, result)
-            # Verify store_inspection_data was called with SKU as serial
-            mock_store_data.assert_called_once()
-            call_args = mock_store_data.call_args
-            inventory = call_args[0][1]
-            self.assertEqual('DELL-SVC-TAG',
-                             inventory['system_vendor']['serial_number'])
+            self.assertEqual('DELL-SVC-TAG', result['serial_number'])
+            self.assertEqual('Dell Inc.', result['manufacturer'])
+            self.assertEqual('PowerEdge R640', result['product_name'])
 
-    @mock.patch.object(redfish_inspect.RedfishInspect, 'inspect_hardware',
-                       autospec=True)
-    @mock.patch.object(inspect_utils, 'create_ports_if_not_exist',
-                       autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
-    def test_inspect_hardware_no_sku(
-            self, mock_get_system, mock_create_ports, mock_parent_inspect):
-        """Test inspection when SKU is not available.
+    def test_get_system_vendor_info_no_sku(self, mock_get_system):
+        """Test that original serial_number is preserved when SKU is None.
 
         When SKU is not available, the original serial_number from Redfish
         should be preserved.
@@ -242,18 +218,17 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
         system_mock = self.init_system_mock(mock_get_system.return_value)
         system_mock.serial_number = 'MOBO123456'
         system_mock.sku = None
-
-        mock_parent_inspect.return_value = states.MANAGEABLE
+        system_mock.manufacturer = 'Dell Inc.'
+        system_mock.model = 'PowerEdge R640'
+        system_mock.uuid = '12345678-1234-1234-1234-123456789abc'
 
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
-            task.driver.inspect._get_mac_address = mock.Mock(return_value={})
-            result = task.driver.inspect.inspect_hardware(task)
+            system = redfish_utils.get_system(task.node)
+            result = task.driver.inspect._get_system_vendor_info(
+                task, system)
 
-            self.assertEqual(states.MANAGEABLE, result)
-            # Parent inspect_hardware called but store_inspection_data
-            # should not be called again since SKU is None
-            mock_parent_inspect.assert_called_once()
+            self.assertEqual('MOBO123456', result['serial_number'])
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_collect_lldp_data_successful_dell_oem(self, mock_get_system):
@@ -299,8 +274,8 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
                        '_get_dell_switch_connections', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_collect_lldp_data_fallback_to_standard(self, mock_get_system,
-                                                   mock_get_connections,
-                                                   mock_super_collect):
+                                                    mock_get_connections,
+                                                    mock_super_collect):
         """Test fallback to standard Redfish LLDP when Dell OEM fails."""
         system_mock = self._setup_lldp_system_mock(mock_get_system)
 

@@ -148,19 +148,7 @@ class RedfishInspect(base.InspectInterface):
 
         inventory['interfaces'] = self._get_interface_info(task, system)
 
-        system_vendor = {}
-        if system.model:
-            system_vendor['product_name'] = str(system.model)
-
-        if system.serial_number:
-            system_vendor['serial_number'] = str(system.serial_number)
-
-        if system.manufacturer:
-            system_vendor['manufacturer'] = str(system.manufacturer)
-
-        if system.uuid:
-            system_vendor['system_uuid'] = str(system.uuid)
-
+        system_vendor = self._get_system_vendor_info(task, system)
         if system_vendor:
             inventory['system_vendor'] = system_vendor
 
@@ -302,6 +290,28 @@ class RedfishInspect(base.InspectInterface):
                   If cannot be determined, returns None.
         """
         return None
+
+    def _get_system_vendor_info(self, task, system):
+        """Get system vendor information.
+
+        :param task: a TaskManager instance.
+        :param system: a Redfish system object.
+        :returns: a dictionary of system vendor information.
+        """
+        system_vendor = {}
+        if system.model:
+            system_vendor['product_name'] = str(system.model)
+
+        if system.serial_number:
+            system_vendor['serial_number'] = str(system.serial_number)
+
+        if system.manufacturer:
+            system_vendor['manufacturer'] = str(system.manufacturer)
+
+        if system.uuid:
+            system_vendor['system_uuid'] = str(system.uuid)
+
+        return system_vendor
 
     def _get_interface_info(self, task, system):
         """Extract ethernet interface info."""
