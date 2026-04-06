@@ -18,6 +18,10 @@ import sushy
 from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.common import metrics_utils
+from ironic.common import states
+from ironic.conductor import periodics
+from ironic.conductor import utils as manager_utils
+from ironic.conf import CONF
 from ironic.drivers import base
 from ironic.drivers.modules import deploy_utils
 from ironic.drivers.modules.redfish import utils as redfish_utils
@@ -30,6 +34,14 @@ METRICS = metrics_utils.get_metrics_logger(__name__)
 registry_fields = ('attribute_type', 'allowable_values', 'lower_bound',
                    'max_length', 'min_length', 'read_only',
                    'reset_required', 'unique', 'upper_bound')
+
+BIOS_REBOOT_STATES = {
+    sushy.BootProgressStates.OS_BOOT_STARTED,
+    sushy.BootProgressStates.OS_RUNNING,
+}
+_DII_STATE = 'redfish_bios_state'
+_REBOOT_REQUESTED = 'reboot_requested'
+_REQUESTED_BIOS_ATTRS = 'requested_bios_attrs'
 
 
 class RedfishBIOS(base.BIOSInterface):
@@ -164,7 +176,8 @@ class RedfishBIOS(base.BIOSInterface):
 
         node = task.node
         info = node.driver_internal_info
-        reboot_requested = info.get('post_bios_reboot_requested')
+        bios_state = info.get(_DII_STATE) or {}
+        reboot_requested = bios_state.get(_REBOOT_REQUESTED, False)
         if not reboot_requested:
             LOG.debug('Factory reset BIOS configuration for node %(node)s',
                       {'node': node.uuid})
@@ -177,7 +190,9 @@ class RedfishBIOS(base.BIOSInterface):
                 LOG.error(error_msg)
                 raise exception.RedfishError(error=error_msg)
 
-            self._set_reboot_requested(task, None)
+            self._set_reboot_requested(
+                task,
+                attributes=None)
             return self.post_reset(task)
         else:
             current_attrs = bios.attributes
@@ -186,8 +201,10 @@ class RedfishBIOS(base.BIOSInterface):
                       {'node_uuid': node.uuid, 'attrs': current_attrs})
             self._clear_reboot_requested(task)
 
-    @base.service_step(priority=0, argsinfo=_APPLY_CONFIGURATION_ARGSINFO)
-    @base.clean_step(priority=0, argsinfo=_APPLY_CONFIGURATION_ARGSINFO)
+    @base.service_step(priority=0, argsinfo=_APPLY_CONFIGURATION_ARGSINFO,
+                       requires_ramdisk=False)
+    @base.clean_step(priority=0, argsinfo=_APPLY_CONFIGURATION_ARGSINFO,
+                     requires_ramdisk=False)
     @base.deploy_step(priority=0, argsinfo=_APPLY_CONFIGURATION_ARGSINFO)
     @base.cache_bios_settings
     def apply_configuration(self, task, settings):
@@ -213,7 +230,8 @@ class RedfishBIOS(base.BIOSInterface):
         attributes = {s['name']: s['value'] for s in settings}
 
         info = task.node.driver_internal_info
-        reboot_requested = info.get('post_bios_reboot_requested')
+        bios_state = info.get(_DII_STATE) or {}
+        reboot_requested = bios_state.get(_REBOOT_REQUESTED, False)
 
         if not reboot_requested:
             # Step 1: Apply settings and issue a reboot
@@ -240,17 +258,30 @@ class RedfishBIOS(base.BIOSInterface):
                 LOG.error(error_msg)
                 raise exception.RedfishError(error=error_msg)
 
-            self._set_reboot_requested(task, attributes)
+            self._set_reboot_requested(
+                task,
+                attributes)
             return self.post_configuration(task, settings)
         else:
             # Step 2: Verify requested BIOS settings applied
-            requested_attrs = info.get('requested_bios_attrs')
-            current_attrs = bios.attributes
+            requested_attrs = (
+                bios_state.get(_REQUESTED_BIOS_ATTRS)
+                or info.get(_REQUESTED_BIOS_ATTRS))
             LOG.debug('Verify BIOS configuration for node %(node_uuid)s: '
                       '%(attrs)r', {'node_uuid': task.node.uuid,
                                     'attrs': requested_attrs})
             self._clear_reboot_requested(task)
-            self._check_bios_attrs(task, current_attrs, requested_attrs)
+            attrs_not_updated = self._get_unapplied_bios_attrs(
+                task, requested_attrs, bios)
+            if attrs_not_updated:
+                LOG.debug('BIOS settings %(attrs)s for node %(node_uuid)s '
+                          'not updated.', {'attrs': attrs_not_updated,
+                                           'node_uuid': task.node.uuid})
+                self._set_step_failed(task, attrs_not_updated)
+            else:
+                LOG.debug('Verification of BIOS settings for node '
+                          '%(node_uuid)s successful.',
+                          {'node_uuid': task.node.uuid})
 
     def post_reset(self, task):
         """Perform post reset action to apply the BIOS factory reset.
@@ -293,27 +324,26 @@ class RedfishBIOS(base.BIOSInterface):
         """
         redfish_utils.parse_driver_info(task.node)
 
-    def _check_bios_attrs(self, task, current_attrs, requested_attrs):
-        """Checks that the requested BIOS settings were applied to the service.
+    def _get_unapplied_bios_attrs(self, task, requested_attrs, bios):
+        """Return requested BIOS attrs that have not yet been applied.
 
         :param task: a TaskManager instance containing the node to act on.
-        :param current_attrs: the current BIOS attributes from the system.
         :param requested_attrs: the requested BIOS attributes to update.
+        :param bios: BIOS resource object from the system.
+        :returns: dict of attributes not yet applied, empty if all applied.
         """
-
+        bios.refresh(force=True)
+        current_attrs = bios.attributes
+        pending_attrs = bios.pending_attributes
+        if not isinstance(pending_attrs, dict):
+            pending_attrs = {}
         attrs_not_updated = {}
         for attr in requested_attrs:
             if requested_attrs[attr] != current_attrs.get(attr):
                 attrs_not_updated[attr] = requested_attrs[attr]
-
-        if attrs_not_updated:
-            LOG.debug('BIOS settings %(attrs)s for node %(node_uuid)s '
-                      'not updated.', {'attrs': attrs_not_updated,
-                                       'node_uuid': task.node.uuid})
-            self._set_step_failed(task, attrs_not_updated)
-        else:
-            LOG.debug('Verification of BIOS settings for node %(node_uuid)s '
-                      'successful.', {'node_uuid': task.node.uuid})
+            elif attr in pending_attrs:
+                attrs_not_updated[attr] = requested_attrs[attr]
+        return attrs_not_updated
 
     def _set_reboot_requested(self, task, attributes):
         """Set driver_internal_info flags for reboot requested.
@@ -321,14 +351,22 @@ class RedfishBIOS(base.BIOSInterface):
         :param task: a TaskManager instance containing the node to act on.
         :param attributes: the requested BIOS attributes to update.
         """
-        task.node.set_driver_internal_info('post_bios_reboot_requested',
-                                           True)
+        node = task.node
+        bios_state = {_REBOOT_REQUESTED: True}
         if attributes:
-            task.node.set_driver_internal_info('requested_bios_attrs',
-                                               attributes)
-        task.node.save()
+            bios_state[_REQUESTED_BIOS_ATTRS] = attributes
+        node.set_driver_internal_info(_DII_STATE, bios_state)
+        node.save()
+        disable_ramdisk = deploy_utils.is_ramdisk_disabled(node)
+        # polling=True tells the IPA heartbeat handler to stand down so
+        # that only our periodic task (_query_bios_apply_status) drives
+        # step completion.  When ramdisk is active (polling=False), both
+        # the heartbeat and the periodic task may race; the exclusive
+        # lock in continue_node_clean/deploy/service ensures only one
+        # wins.
         deploy_utils.set_async_step_flags(task.node, reboot=True,
-                                          skip_current_step=False)
+                                          skip_current_step=False,
+                                          polling=disable_ramdisk)
 
     def _clear_reboot_requested(self, task):
         """Clear driver_internal_info flags after reboot completed.
@@ -336,8 +374,10 @@ class RedfishBIOS(base.BIOSInterface):
         :param task: a TaskManager instance containing the node to act on.
         """
         node = task.node
+        node.del_driver_internal_info(_DII_STATE)
+        # Drop legacy fields if present from older runs.
         node.del_driver_internal_info('post_bios_reboot_requested')
-        node.del_driver_internal_info('requested_bios_attrs')
+        node.del_driver_internal_info(_REQUESTED_BIOS_ATTRS)
         node.save()
 
     def _set_step_failed(self, task, attrs_not_updated):
@@ -353,3 +393,75 @@ class RedfishBIOS(base.BIOSInterface):
                         'Attributes %(attrs)s are not updated.') %
                       {'attrs': attrs_not_updated})
         deploy_utils.step_error_handler(task, error_msg, last_error)
+
+    @METRICS.timer('RedfishBIOS._query_bios_apply_status')
+    @periodics.node_periodic(
+        purpose='checking async redfish BIOS apply/reset status',
+        spacing=CONF.redfish.firmware_update_status_interval,
+        filters={'reserved': False,
+                 'provision_state_in': {states.CLEANWAIT,
+                                        states.SERVICEWAIT,
+                                        states.DEPLOYWAIT}},
+        predicate_extra_fields=['driver_internal_info'],
+        predicate=lambda n: n.driver_internal_info.get(_DII_STATE),
+    )
+    def _query_bios_apply_status(self, task, manager, context):
+        self._check_node_redfish_bios_apply(task)
+
+    @METRICS.timer('RedfishBIOS._check_node_redfish_bios_apply')
+    def _check_node_redfish_bios_apply(self, task):
+        node = task.node
+
+        bios_state = node.driver_internal_info.get(_DII_STATE) or {}
+        if not bios_state:
+            LOG.debug('BIOS state cleared for node %(node)s before periodic '
+                      'could process it (likely a timeout race).',
+                      {'node': node.uuid})
+            return
+
+        try:
+            system = redfish_utils.get_system(node)
+        except (exception.RedfishError,
+                exception.RedfishConnectionError,
+                sushy.exceptions.SushyError) as e:
+            LOG.warning('Unable to query Redfish system for node %(node)s '
+                        'while waiting for BIOS reboot completion: '
+                        '%(error)s',
+                        {'node': node.uuid, 'error': e})
+            return
+
+        last_state = system.boot_progress.last_state
+        if last_state is not None:
+            # BootProgress is reported — touch provisioning to prevent the
+            # global timeout from firing while we observe meaningful progress.
+            node.touch_provisioning()
+            if last_state not in BIOS_REBOOT_STATES:
+                LOG.debug('Node %(node)s boot progress: %(state)s. '
+                          'Waiting for boot progress to reach OS started.',
+                          {'node': node.uuid, 'state': last_state})
+                return
+        # When BootProgress is unavailable (last_state is None), fall
+        # through to the attrs check below. Do NOT touch provisioning
+        # so the global timeout remains the safety net.
+
+        requested_attrs = bios_state.get(_REQUESTED_BIOS_ATTRS)
+        if requested_attrs:
+            attrs_not_updated = self._get_unapplied_bios_attrs(
+                task, requested_attrs, system.bios)
+            if attrs_not_updated:
+                LOG.debug('BIOS settings %(attrs)s for node %(node_uuid)s '
+                          'not yet applied; continue polling.',
+                          {'attrs': attrs_not_updated,
+                           'node_uuid': node.uuid})
+                return
+
+        LOG.info('Detected post-BIOS reboot completion for node %(node)s, '
+                 'resuming the current step.',
+                 {'node': node.uuid})
+
+        if node.clean_step:
+            manager_utils.notify_conductor_resume_clean(task)
+        elif node.service_step:
+            manager_utils.notify_conductor_resume_service(task)
+        elif node.deploy_step:
+            manager_utils.notify_conductor_resume_deploy(task)

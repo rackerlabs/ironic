@@ -1734,23 +1734,26 @@ def prepare_agent_boot(task):
     task.driver.boot.prepare_ramdisk(task, deploy_opts)
 
 
-def reboot_to_finish_step(task, timeout=None, disable_ramdisk=None):
+def is_ramdisk_disabled(node) -> bool:
+    """Check if the ramdisk (IPA) is disabled for the node."""
+    if node.provision_state in [states.CLEANING, states.CLEANWAIT]:
+        return bool(node.driver_internal_info.get(
+            'cleaning_disable_ramdisk'))
+    elif node.provision_state in [states.SERVICING, states.SERVICEWAIT]:
+        return bool(node.driver_internal_info.get(
+            'service_disable_ramdisk'))
+    else:
+        return False
+
+
+def reboot_to_finish_step(task):
     """Reboot the node into IPA to finish a deploy/clean step.
 
     :param task: a TaskManager instance.
-    :param timeout: timeout (in seconds) positive integer (> 0) for any
-      power state. ``None`` indicates to use default timeout.
     :returns: states.CLEANWAIT if cleaning operation in progress
               or states.DEPLOYWAIT if deploy operation in progress.
     """
-    if disable_ramdisk is None:
-        if task.node.provision_state in [states.CLEANING, states.CLEANWAIT]:
-            disable_ramdisk = task.node.driver_internal_info.get(
-                'cleaning_disable_ramdisk')
-        elif task.node.provision_state in [states.SERVICING,
-                                           states.SERVICEWAIT]:
-            disable_ramdisk = task.node.driver_internal_info.get(
-                'service_disable_ramdisk')
+    disable_ramdisk = is_ramdisk_disabled(task.node)
     if not disable_ramdisk:
         if (manager_utils.is_fast_track(task)
                 and not task.node.disable_power_off):
@@ -1759,7 +1762,7 @@ def reboot_to_finish_step(task, timeout=None, disable_ramdisk=None):
             manager_utils.node_power_action(task, states.POWER_OFF)
         prepare_agent_boot(task)
 
-    manager_utils.node_power_action(task, states.REBOOT, timeout)
+    manager_utils.node_power_action(task, states.REBOOT)
     return async_steps.get_return_state(task.node)
 
 

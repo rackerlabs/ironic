@@ -140,6 +140,8 @@ class DracRedfishRAIDTestCase(test_utils.BaseDracTest):
     @mock.patch.object(drac_raid, '_retry_till_realtime_ready', autospec=True)
     def test__wait_till_realtime_ready(self, mock_ready):
         self.node.set_driver_internal_info('cleaning_disable_ramdisk', True)
+        self.node.provision_state = states.CLEANING
+        self.node.save()
         task = mock.Mock(node=self.node, context=self.context)
         task.driver.power.get_power_state.return_value = states.POWER_OFF
         drac_raid._wait_till_realtime_ready(task)

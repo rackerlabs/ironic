@@ -1,0 +1,26 @@
+---
+features:
+  - |
+    The Redfish BIOS ``apply_configuration`` clean and service steps now
+    use a periodic task that polls the BMC's Redfish ``BootProgress``
+    resource to detect reboot completion, and for ``apply_configuration``
+    verifies that the requested BIOS attributes have been applied.  When
+    ``disable_ramdisk`` is set, this allows BIOS settings to be changed
+    without booting into the Ironic Python Agent (IPA), solving the
+    chicken-and-egg problem where BIOS settings must be changed before the
+    node can PXE-boot into IPA.  When IPA is also active, both the
+    periodic poller and heartbeat race safely.
+    See `bug 2075980 <https://bugs.launchpad.net/ironic/+bug/2075980>`_.
+upgrade:
+  - |
+    The internal ``driver_internal_info`` key used to track pending BIOS
+    operations has changed from ``post_bios_reboot_requested`` /
+    ``requested_bios_attrs`` to a single structured ``redfish_bios_state``
+    dict.  Ensure no BIOS clean or service steps are in progress during
+    the upgrade.  Any in-flight BIOS operations that were started on the
+    old code will be cleaned up automatically on the next step invocation.
+other:
+  - |
+    The helper ``deploy_utils.reboot_to_finish_step()`` no longer accepts
+    ``timeout`` or ``disable_ramdisk`` keyword arguments.  Out-of-tree
+    drivers that passed these arguments must be updated.
