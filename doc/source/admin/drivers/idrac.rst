@@ -214,6 +214,93 @@ The management interface for ``idrac-redfish`` supports:
   :doc:`/admin/drivers/redfish` for more information on firmware update
   support.
 
+BMC configuration service steps
+-------------------------------
+
+The ``idrac-redfish`` management interface provides out-of-band cleaning and
+service steps for programming common iDRAC settings. They PATCH the Dell OEM
+``DellAttributes`` resources directly over Redfish (the iDRAC attributes for
+NTP and DNS, the System attributes for OpenID Connect) and apply immediately
+without a reboot. They can be run individually or bundled into a runbook:
+
+* ``set_ntp_servers`` -- configure NTP servers (up to three) and,
+  optionally, the timezone. Arguments: ``ntp_servers`` (required list),
+  ``enable_ntp`` (default ``true``), ``timezone``.
+* ``set_dns_servers`` -- configure the static IPv4 DNS servers (up to two)
+  and, optionally, the DNS domain name. Learning the DNS servers and domain
+  name from DHCP is always disabled. Arguments: ``dns_servers`` (required
+  list), ``dns_domain_name``.
+* ``set_oidc_config`` -- configure an OpenID Connect provider for single
+  sign-on and wait for its RFC 7591 dynamic client registration to complete.
+  Arguments: ``discovery_url``, ``initial_access_token``,
+  ``https_certificate`` (the PEM-encoded provider CA), ``name`` (default
+  ``SSO``), ``enable_oidc`` (default ``true``), ``provider_index`` (default
+  ``1``), and ``registration_timeout`` (default ``600`` seconds). If
+  ``discovery_url``, ``initial_access_token`` or ``https_certificate`` are
+  omitted, the step uses ``[drac]oidc_discovery_url``,
+  ``[drac]oidc_initial_access_token`` or
+  ``[drac]oidc_https_certificate_file``.
+  ``[drac]oidc_https_certificate_file`` is the path to a file containing the
+  PEM-encoded certificate; the file is read each time the step runs, so it
+  can be updated without restarting the conductor.
+  ``https_certificate`` is optional: if it is not passed and
+  ``[drac]oidc_https_certificate_file`` is unset (the default) or empty, no
+  certificate is sent to the iDRAC.
+
+Every step also accepts an ``extra_attributes`` argument -- a dictionary of
+raw Dell OEM attribute name/value pairs merged into the PATCH -- so that
+attribute names that differ between iDRAC firmware versions can be supplied
+directly.
+
+For example, to set the NTP servers on an active node with a service step
+(no ramdisk is required, as these steps run entirely out of band)::
+
+    baremetal node service $NODE --disable-ramdisk --service-steps \
+        '[{"interface": "management", "step": "set_ntp_servers",
+           "args": {"ntp_servers": ["10.0.0.1", "10.0.0.2"],
+                    "timezone": "US/Central"}}]'
+
+The same steps can be bundled into a :doc:`runbook </admin/runbooks>` and
+applied with ``baremetal node service --runbook <RUNBOOK> $NODE``. A runbook
+that configures OIDC must run the steps in this order:
+
+#. ``set_dns_servers``, so the iDRAC can resolve the provider name.
+#. ``set_ntp_servers``, so token and certificate validity checks use the
+   correct time. For example, use ``["192.0.2.123", "192.0.2.124"]`` and
+   timezone ``UTC``.
+#. ``set_oidc_config``. Prefer configuring the discovery URL, initial access
+   token and CA certificate in the conductor's ``[drac]`` config and omitting
+   them from the runbook. iDRAC takes several minutes to discover the provider
+   and register with it, so the step is asynchronous: the node waits in
+   ``clean wait`` or ``service wait`` while a periodic task polls the
+   registration status every
+   ``[drac]query_oidc_registration_status_interval`` seconds. The step
+   succeeds once iDRAC reports a successful registration response with HTTP
+   status 201, and fails if iDRAC reports a failure or
+   ``registration_timeout`` expires.
+
+.. warning::
+   Do not put ``initial_access_token`` in a runbook. Runbooks and node step
+   state store step arguments, so a token passed as a step argument is exposed
+   in plaintext in:
+
+   * the node's ``clean_step`` or ``service_step`` field, in the database
+     and in the API, while the step runs;
+   * the node's ``driver_internal_info`` in the database;
+   * the node's ``last_error`` and node history if the step fails;
+   * conductor logs that record step arguments;
+   * node notifications, when notifications are enabled;
+   * runbooks stored in the database, if the token is placed in a runbook.
+
+   Use ``[drac]oidc_initial_access_token`` instead, load it from protected
+   service configuration, limit the token's lifetime and registration
+   privileges, and rotate or revoke the token when it is no longer needed.
+
+.. note::
+   The attribute names used by these steps target iDRAC9. If a step reports
+   that an attribute is unknown, supply the correct name for your firmware
+   through ``extra_attributes``.
+
 RAID Interface
 ==============
 
