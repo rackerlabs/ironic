@@ -99,3 +99,106 @@ class DracUtilsOemManagerTestCase(test_utils.BaseDracTest):
                 task,
                 'test method',
                 lambda m: m.test_method())
+
+
+@mock.patch.object(redfish_utils, 'get_manager', autospec=True)
+@mock.patch.object(redfish_utils, 'get_system', autospec=True)
+class DracUtilsDellAttributesTestCase(test_utils.BaseDracTest):
+
+    def setUp(self):
+        super(DracUtilsDellAttributesTestCase, self).setUp()
+        self.node = obj_utils.create_test_node(self.context,
+                                               driver='idrac',
+                                               driver_info=INFO_DICT)
+        self.config(enabled_hardware_types=['idrac'],
+                    enabled_management_interfaces=['idrac-redfish'])
+
+    def _fake_manager(self, links=None, path='/redfish/v1/Managers/'
+                      'iDRAC.Embedded.1', identity='iDRAC.Embedded.1'):
+        manager = mock.Mock()
+        manager.json = {'Links': {'Oem': {'Dell': {
+            'DellAttributes': links if links is not None else []}}}}
+        manager.path = path
+        manager.identity = identity
+        return manager
+
+    def test_get_dell_attributes_uri_matches_system(self, mock_get_system,
+                                                    mock_get_manager):
+        system_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                      'DellAttributes/System.Embedded.1')
+        idrac_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                     'DellAttributes/iDRAC.Embedded.1')
+        manager = self._fake_manager(links=[
+            {'@odata.id': system_uri},
+            {'@odata.id': idrac_uri},
+        ])
+        self.assertEqual(system_uri,
+                         drac_utils._get_dell_attributes_uri(manager))
+
+    def test_get_dell_attributes_uri_matches_explicit_target(
+            self, mock_get_system, mock_get_manager):
+        idrac_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                     'DellAttributes/iDRAC.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': idrac_uri}])
+        self.assertEqual(
+            idrac_uri, drac_utils._get_dell_attributes_uri(
+                manager, target='iDRAC'))
+
+    def test_get_dell_attributes_uri_missing_target(self, mock_get_system,
+                                                    mock_get_manager):
+        first = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                 'DellAttributes/System.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': first}])
+        self.assertRaises(exception.RedfishError,
+                          drac_utils._get_dell_attributes_uri,
+                          manager, target='Nope')
+
+    def test_get_dell_attributes_uri_not_advertised(self, mock_get_system,
+                                                    mock_get_manager):
+        manager = self._fake_manager(links=[])
+        self.assertRaises(exception.RedfishError,
+                          drac_utils._get_dell_attributes_uri, manager)
+
+    def test_set_dell_attributes(self, mock_get_system, mock_get_manager):
+        system_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                      'DellAttributes/System.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': system_uri}])
+        mock_get_manager.return_value = manager
+
+        attributes = {'NTPConfigGroup.1.NTP1': '10.0.0.1'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            drac_utils.set_dell_attributes(task, attributes)
+
+        manager._conn.patch.assert_called_once_with(
+            system_uri, data={'Attributes': attributes})
+
+    def test_get_dell_attributes(self, mock_get_system, mock_get_manager):
+        system_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                      'DellAttributes/System.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': system_uri}])
+        manager._conn.get.return_value.json.return_value = {
+            'Attributes': {'Time.1.Timezone': 'UTC'}}
+        mock_get_manager.return_value = manager
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            result = drac_utils.get_dell_attributes(task)
+
+        self.assertEqual({'Time.1.Timezone': 'UTC'}, result)
+        manager._conn.get.assert_called_once_with(system_uri)
+
+    def test_set_dell_attributes_error(self, mock_get_system,
+                                       mock_get_manager):
+        system_uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+                      'DellAttributes/System.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': system_uri}])
+        manager._conn.patch.side_effect = sushy.exceptions.SushyError
+        mock_get_manager.return_value = manager
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(
+                exception.RedfishError,
+                drac_utils.set_dell_attributes,
+                task, {'NTPConfigGroup.1.NTP1': '10.0.0.1'})
