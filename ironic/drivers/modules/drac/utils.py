@@ -109,3 +109,94 @@ def execute_oem_manager_method(
                       'unknown'}))
         LOG.error(error_msg)
         raise exception.RedfishError(error=error_msg)
+
+
+def _get_dell_attributes_uri(manager, target='System'):
+    """Resolve the URI of a Dell OEM ``DellAttributes`` resource.
+
+    iDRAC exposes its configuration through Dell OEM ``DellAttributes``
+    resources (one each for the iDRAC, the System and the Lifecycle
+    Controller). These are advertised from the Manager under
+    ``Links/Oem/Dell/DellAttributes``.
+
+    :param manager: a sushy Manager object.
+    :param target: substring used to pick the desired attribute resource,
+        matched against the trailing resource identifier in the advertised
+        ``@odata.id`` values. Defaults to ``System``.
+    :returns: the URI of the matching ``DellAttributes`` resource.
+    :raises: RedfishError if the requested resource is not advertised.
+    """
+    links = (((manager.json or {}).get('Links') or {}).get('Oem') or {}) \
+        .get('Dell', {}).get('DellAttributes') or []
+
+    for member in links:
+        uri = member.get('@odata.id')
+        if not uri:
+            continue
+        # Match against the trailing resource id (e.g. ``iDRAC.Embedded.1``)
+        # rather than the whole URI: the manager id also appears earlier in
+        # the path, so a substring match on the URI is ambiguous.
+        member_id = uri.rstrip('/').rsplit('/', 1)[-1]
+        if target.lower() in member_id.lower():
+            return uri
+
+    raise exception.RedfishError(
+        error=_('DellAttributes resource for target %(target)s was not '
+                'advertised by manager %(manager)s') %
+        {'target': target, 'manager': manager.identity})
+
+
+def get_dell_attributes(task, target='System'):
+    """Return attributes from a Dell OEM ``DellAttributes`` resource."""
+    system = redfish_utils.get_system(task.node)
+    manager = redfish_utils.get_manager(task.node, system)
+    uri = _get_dell_attributes_uri(manager, target=target)
+
+    try:
+        response = manager._conn.get(uri)
+        data = response.json()
+    except (sushy.exceptions.SushyError, ValueError) as e:
+        error_msg = (_('Failed to read Dell attributes for node %(node)s '
+                       'at %(uri)s. Error: %(error)s') %
+                     {'node': task.node.uuid, 'uri': uri, 'error': e})
+        LOG.error(error_msg)
+        raise exception.RedfishError(error=error_msg)
+
+    return data.get('Attributes', data)
+
+
+def set_dell_attributes(task, attributes, target='System'):
+    """Apply a set of Dell OEM attributes to a node's iDRAC.
+
+    Performs a raw Redfish PATCH against the Dell OEM ``DellAttributes``
+    resource. Most iDRAC attributes (NTP, DNS, OIDC, ...) are applied
+    immediately, without requiring a configuration job or a reboot.
+
+    Only the attribute names are logged, never their values, so that
+    secrets (such as an OIDC client secret) are not written to the logs.
+
+    :param task: a TaskManager instance containing the node to act on.
+    :param attributes: a dict of ``{attribute_name: value}`` to apply.
+    :param target: which ``DellAttributes`` resource to target. Defaults
+        to the System attributes.
+    :raises: RedfishError on any error talking to the BMC.
+    """
+    system = redfish_utils.get_system(task.node)
+    manager = redfish_utils.get_manager(task.node, system)
+    uri = _get_dell_attributes_uri(manager, target=target)
+
+    LOG.debug('Applying Dell attributes %(attrs)s to node %(node)s at '
+              '%(uri)s', {'attrs': sorted(attributes),
+                          'node': task.node.uuid, 'uri': uri})
+    try:
+        manager._conn.patch(uri, data={'Attributes': attributes})
+    except sushy.exceptions.SushyError as e:
+        error_msg = (_('Failed to apply Dell attributes %(attrs)s to node '
+                       '%(node)s at %(uri)s. Error: %(error)s') %
+                     {'attrs': sorted(attributes), 'node': task.node.uuid,
+                      'uri': uri, 'error': e})
+        LOG.error(error_msg)
+        raise exception.RedfishError(error=error_msg)
+
+    LOG.info('Applied Dell attributes %(attrs)s to node %(node)s',
+             {'attrs': sorted(attributes), 'node': task.node.uuid})
