@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    Adds three out-of-band ``management`` cleaning and service steps to the
+    ``idrac`` hardware type for programming iDRAC configuration via Redfish:
+    ``set_ntp_servers``, ``set_dns_servers`` and ``set_oidc_config`` (the
+    latter for OpenID Connect single sign-on using RFC 7591 dynamic client
+    registration). The steps PATCH the Dell OEM ``DellAttributes``
+    resources directly and apply immediately without a reboot. They can be
+    driven from a runbook. Each step accepts an ``extra_attributes`` argument
+    for passing raw Dell OEM attribute name/value pairs, to accommodate iDRAC
+    firmware whose attribute names differ.
