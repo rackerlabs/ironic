@@ -21,6 +21,7 @@ DRAC management interface
 """
 
 import json
+import time
 
 import jsonschema
 from jsonschema import exceptions as json_schema_exc
@@ -104,6 +105,191 @@ _CONF_MOLD_SCHEMA = {
     'required': ['oem'],
     'additionalProperties': False
 }
+
+# iDRAC supports up to three NTP servers and two static IPv4 DNS servers.
+_MAX_NTP_SERVERS = 3
+_MAX_DNS_SERVERS = 2
+_MAX_OIDC_PROVIDERS = 16
+# driver_internal_info key holding the state of an in-progress OIDC
+# registration that the periodic task polls.
+_OIDC_REGISTRATION_INFO = 'oidc_registration'
+
+_SET_NTP_ARGSINFO = {
+    'ntp_servers': {
+        'description': (
+            'A list of up to three NTP server addresses to configure on the '
+            'iDRAC.'),
+        'required': True,
+    },
+    'enable_ntp': {
+        'description': (
+            'Whether to enable NTP time synchronisation. Defaults to True.'),
+        'required': False,
+    },
+    'timezone': {
+        'description': (
+            'Optional iDRAC timezone string, e.g. "US/Central".'),
+        'required': False,
+    },
+    'extra_attributes': {
+        'description': (
+            'Optional dict of raw Dell OEM attribute name/value pairs '
+            'merged into the PATCH, for iDRAC firmware whose attribute '
+            'names differ.'),
+        'required': False,
+    },
+}
+
+_SET_DNS_ARGSINFO = {
+    'dns_servers': {
+        'description': (
+            'A list of up to two static IPv4 DNS server addresses to '
+            'configure on the iDRAC.'),
+        'required': True,
+    },
+    'dns_domain_name': {
+        'description': (
+            'Optional DNS domain name to set on the iDRAC.'),
+        'required': False,
+    },
+    'extra_attributes': {
+        'description': (
+            'Optional dict of raw Dell OEM attribute name/value pairs '
+            'merged into the PATCH, for iDRAC firmware whose attribute '
+            'names differ.'),
+        'required': False,
+    },
+}
+
+_SET_OIDC_ARGSINFO = {
+    'discovery_url': {
+        'description': (
+            'The OpenID Connect provider discovery URL '
+            '(.well-known/openid-configuration).'),
+        'required': False,
+    },
+    'initial_access_token': {
+        'description': (
+            'The RFC 7591 initial access token used by iDRAC to register '
+            'itself with the provider. This value is stored in the runbook '
+            'step arguments.'),
+        'required': False,
+    },
+    'https_certificate': {
+        'description': (
+            'The PEM-encoded CA certificate used to validate the provider.'),
+        'required': False,
+    },
+    'name': {
+        'description': (
+            'A display name for the OpenID Connect provider entry.'),
+        'required': False,
+    },
+    'enable_oidc': {
+        'description': (
+            'Whether to enable this OpenID Connect provider. Defaults to '
+            'True.'),
+        'required': False,
+    },
+    'provider_index': {
+        'description': (
+            'Which iDRAC OpenIDConnectServer slot to program (1-based). '
+            'Defaults to 1.'),
+        'required': False,
+    },
+    'registration_timeout': {
+        'description': (
+            'Seconds to wait for iDRAC dynamic client registration to '
+            'finish. Defaults to 600.'),
+        'required': False,
+    },
+    'extra_attributes': {
+        'description': (
+            'Optional dict of raw Dell OEM attribute name/value pairs '
+            'merged into the PATCH, for iDRAC firmware whose attribute '
+            'names differ.'),
+        'required': False,
+    },
+}
+
+
+def _bool_to_idrac(value):
+    """Map a Python boolean to the iDRAC 'Enabled'/'Disabled' string."""
+    return 'Enabled' if value else 'Disabled'
+
+
+def _validate_server_list(name, values, maximum, required):
+    """Validate an ordered list of BMC network-service endpoints."""
+    if not isinstance(values, list):
+        raise exception.InvalidParameterValue(
+            _('%(name)s must be a list of server addresses') % {'name': name})
+    if len(values) > maximum:
+        raise exception.InvalidParameterValue(
+            _('%(name)s supports at most %(maximum)d server addresses') %
+            {'name': name, 'maximum': maximum})
+    if required and not values:
+        raise exception.InvalidParameterValue(
+            _('%(name)s must contain at least one server address') %
+            {'name': name})
+    if any(not isinstance(value, str) or not value.strip()
+           for value in values):
+        raise exception.InvalidParameterValue(
+            _('%(name)s entries must be non-empty strings') % {'name': name})
+
+
+def _merge_extra_attributes(attributes, extra_attributes):
+    """Merge caller-supplied raw Dell OEM attributes over computed ones."""
+    if extra_attributes is None:
+        return
+    if not isinstance(extra_attributes, dict):
+        raise exception.InvalidParameterValue(
+            _('extra_attributes must be a dictionary of attribute names to '
+              'values'))
+    attributes.update(extra_attributes)
+
+
+def _parse_oidc_registration_status(value):
+    """Decode iDRAC's JSON-encoded OIDC registration status attribute."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        status = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return status if isinstance(status, dict) else {}
+
+
+def _check_oidc_registration_status(status, previous_sequence):
+    """Classify an iDRAC OIDC registration status.
+
+    :param status: the decoded RegistrationStatus attribute.
+    :param previous_sequence: the status Sequence observed before the
+        provider was configured, or None if there was none.
+    :returns: a tuple of (result, error) where result is ``'success'``,
+        ``'failed'`` or None while registration is still in progress, and
+        error is a description of the failure.
+    """
+    # A status with the same sequence as before the PATCH predates this
+    # configuration attempt.
+    if (previous_sequence is not None
+            and status.get('Sequence') == previous_sequence):
+        return None, None
+
+    request_status = str(status.get('Request Status') or '').lower()
+    action = str(status.get('Action') or '').lower()
+    if request_status == 'failed':
+        error = (_('%(action)s failed: HTTP status %(status)s; %(error)s') %
+                 {'action': action or 'registration',
+                  'status': status.get('HTTP Status') or 'unknown',
+                  'error': (status.get('HTTP Error')
+                            or 'no error details returned')})
+        return 'failed', error
+    if (action == 'register' and request_status == 'success'
+            and str(status.get('HTTP Status')) == '201'):
+        return 'success', None
+    return None, None
 
 
 def _is_boot_order_flexibly_programmable(persistent, bios_settings):
@@ -405,12 +591,16 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
     def _set_success(self, task):
         if task.node.clean_step:
             manager_utils.notify_conductor_resume_clean(task)
+        elif task.node.service_step:
+            manager_utils.notify_conductor_resume_service(task)
         else:
             manager_utils.notify_conductor_resume_deploy(task)
 
     def _set_failed(self, task, log_msg, error_msg):
         if task.node.clean_step:
             manager_utils.cleaning_error_handler(task, log_msg, error_msg)
+        elif task.node.service_step:
+            manager_utils.servicing_error_handler(task, log_msg, error_msg)
         else:
             manager_utils.deploying_error_handler(task, log_msg, error_msg)
 
@@ -483,3 +673,292 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         self.clear_job_queue(task)
         LOG.info('Reset iDRAC to known good state for node %(node)s',
                  {'node': task.node.uuid})
+
+    @METRICS.timer('DracRedfishManagement.set_ntp_servers')
+    @base.clean_step(priority=0, argsinfo=_SET_NTP_ARGSINFO,
+                     requires_ramdisk=False)
+    @base.service_step(priority=0, abortable=False,
+                       argsinfo=_SET_NTP_ARGSINFO, requires_ramdisk=False)
+    def set_ntp_servers(self, task, ntp_servers, enable_ntp=True,
+                        timezone=None, extra_attributes=None):
+        """Program the iDRAC NTP server settings.
+
+        This is an out-of-band service step, invocable from a runbook, that
+        PATCHes the Dell OEM iDRAC attributes directly. No database changes
+        are made and the settings apply immediately on the iDRAC.
+
+        :param task: a TaskManager instance containing the node to act on.
+        :param ntp_servers: a list of NTP server addresses (up to three are
+            used by the iDRAC).
+        :param enable_ntp: whether to enable NTP synchronisation. Default
+            True.
+        :param timezone: optional iDRAC timezone string.
+        :param extra_attributes: optional dict of raw Dell OEM attributes
+            merged into the PATCH.
+        :raises: InvalidParameterValue if ntp_servers is invalid.
+        :raises: RedfishError on an error talking to the BMC.
+        """
+        _validate_server_list('ntp_servers', ntp_servers,
+                              _MAX_NTP_SERVERS, enable_ntp)
+
+        attributes = {'NTPConfigGroup.1.NTPEnable': _bool_to_idrac(enable_ntp)}
+        for index in range(_MAX_NTP_SERVERS):
+            value = ntp_servers[index] if index < len(ntp_servers) else ''
+            attributes['NTPConfigGroup.1.NTP%d' % (index + 1)] = value
+
+        if timezone:
+            attributes['Time.1.Timezone'] = timezone
+
+        _merge_extra_attributes(attributes, extra_attributes)
+
+        drac_utils.set_dell_attributes(task, attributes, target='iDRAC')
+        LOG.info('Set NTP servers for node %(node)s', {'node': task.node.uuid})
+
+    @METRICS.timer('DracRedfishManagement.set_dns_servers')
+    @base.clean_step(priority=0, argsinfo=_SET_DNS_ARGSINFO,
+                     requires_ramdisk=False)
+    @base.service_step(priority=0, abortable=False,
+                       argsinfo=_SET_DNS_ARGSINFO, requires_ramdisk=False)
+    def set_dns_servers(self, task, dns_servers, dns_domain_name=None,
+                        extra_attributes=None):
+        """Program the iDRAC DNS server settings.
+
+        This is an out-of-band service step, invocable from a runbook, that
+        PATCHes the Dell OEM iDRAC attributes directly. It configures the
+        static IPv4 DNS servers and always disables learning the DNS servers
+        and domain name from DHCP so the static values take effect.
+
+        :param task: a TaskManager instance containing the node to act on.
+        :param dns_servers: a list of DNS server addresses (up to two static
+            IPv4 servers are used by the iDRAC).
+        :param dns_domain_name: optional DNS domain name to set.
+        :param extra_attributes: optional dict of raw Dell OEM attributes
+            merged into the PATCH.
+        :raises: InvalidParameterValue if dns_servers is invalid.
+        :raises: RedfishError on an error talking to the BMC.
+        """
+        _validate_server_list('dns_servers', dns_servers,
+                              _MAX_DNS_SERVERS, True)
+
+        # Static DNS settings only take effect when the iDRAC is not told to
+        # learn them from DHCP. iDRAC exposes duplicate DHCP flags for both
+        # the servers and the domain name, so disable all of them.
+        attributes = {
+            'IPv4.1.DNSFromDHCP': 'Disabled',
+            'IPv4Static.1.DNSFromDHCP': 'Disabled',
+            'NIC.1.DNSDomainFromDHCP': 'Disabled',
+            'NIC.1.DNSDomainNameFromDHCP': 'Disabled',
+        }
+        for index in range(_MAX_DNS_SERVERS):
+            value = dns_servers[index] if index < len(dns_servers) else ''
+            attributes['IPv4Static.1.DNS%d' % (index + 1)] = value
+
+        if dns_domain_name is not None:
+            attributes['NIC.1.DNSDomainName'] = dns_domain_name
+
+        _merge_extra_attributes(attributes, extra_attributes)
+
+        drac_utils.set_dell_attributes(task, attributes, target='iDRAC')
+        LOG.info('Set DNS servers for node %(node)s', {'node': task.node.uuid})
+
+    # TODO(cardoe): The initial_access_token step argument is not redacted
+    # in the following places. Each must be fixed before this step lands:
+    #
+    # * node.clean_step / node.service_step: stored in the database and
+    #   returned unmasked by the node API while the step runs.
+    # * node.driver_internal_info clean_steps / service_steps: stored as
+    #   plaintext in the database (the node API does mask them).
+    # * node.last_error and node history: when the step raises (e.g. an
+    #   invalid argument or a rejected PATCH), the conductor embeds the
+    #   full step dict, args included, in the error message
+    #   (do_next_clean_step in conductor/cleaning.py,
+    #   do_next_service_step in conductor/servicing.py), which
+    #   cleaning_error_handler / servicing_error_handler in
+    #   conductor/utils.py store and log at ERROR.
+    # * Conductor logs: the "remaining steps", "Executing <step>" and
+    #   "finished ... step <step>" INFO messages in conductor/cleaning.py
+    #   and conductor/servicing.py, and the step list DEBUG messages in
+    #   conductor/steps.py.
+    # * Notifications: the node notification payload carries clean_step
+    #   and last_error (NodePayload in objects/node.py).
+    # * Runbooks: stored as plaintext in the database (the runbook API does
+    #   mask args).
+    # * BMC errors: if the iDRAC rejects the PATCH, the error raised by
+    #   drac_utils.set_dell_attributes includes sushy's message, which may
+    #   echo the rejected RegistrationDetails value.
+    @METRICS.timer('DracRedfishManagement.set_oidc_config')
+    @base.clean_step(priority=0, argsinfo=_SET_OIDC_ARGSINFO,
+                     requires_ramdisk=False)
+    @base.service_step(priority=0, abortable=False,
+                       argsinfo=_SET_OIDC_ARGSINFO, requires_ramdisk=False)
+    def set_oidc_config(self, task, discovery_url=None,
+                        initial_access_token=None, https_certificate=None,
+                        name='SSO', enable_oidc=True, provider_index=1,
+                        registration_timeout=600, extra_attributes=None):
+        """Program the iDRAC OpenID Connect (SSO) settings.
+
+        This is an out-of-band service step, invocable from a runbook, that
+        PATCHes the Dell OEM iDRAC attributes directly to configure an
+        OpenID Connect provider for single sign-on. When enabling a provider,
+        iDRAC uses the initial access token to dynamically register an RFC
+        7591 client. Registration takes minutes, so the step is asynchronous:
+        it returns a wait state and a periodic task completes it once iDRAC
+        reports the outcome. This step does not log attribute values, but
+        the token is part of the step arguments and so is recorded wherever
+        Ironic records those (see the TODO above).
+
+        :param task: a TaskManager instance containing the node to act on.
+        :param discovery_url: the provider discovery URL.
+        :param initial_access_token: initial access token for dynamic client
+            registration.
+        :param https_certificate: PEM-encoded CA certificate used to validate
+            the provider.
+        :param name: a display name for the provider entry.
+        :param enable_oidc: whether to enable the provider. Default True.
+        :param provider_index: which OpenIDConnectServer slot to program
+            (1-based). Default 1.
+        :param registration_timeout: seconds to wait for dynamic client
+            registration to complete. Default 600.
+        :param extra_attributes: optional dict of raw Dell OEM attributes
+            merged into the PATCH.
+        :raises: InvalidParameterValue if an argument is invalid.
+        :raises: RedfishError on an error talking to the BMC.
+        :returns: states.CLEANWAIT or states.SERVICEWAIT while registration
+            is pending when enabling a provider, otherwise None.
+        """
+        if (not isinstance(provider_index, int)
+                or isinstance(provider_index, bool)
+                or not 1 <= provider_index <= _MAX_OIDC_PROVIDERS):
+            raise exception.InvalidParameterValue(
+                _('provider_index must be an integer from 1 to %(maximum)d') %
+                {'maximum': _MAX_OIDC_PROVIDERS})
+        if (not isinstance(registration_timeout, (int, float))
+                or isinstance(registration_timeout, bool)
+                or registration_timeout <= 0):
+            raise exception.InvalidParameterValue(
+                _('registration_timeout must be a positive number'))
+        if enable_oidc:
+            if (not isinstance(discovery_url, str)
+                    or not discovery_url.startswith('https://')):
+                raise exception.InvalidParameterValue(
+                    _('discovery_url must be an HTTPS URL'))
+            if (not isinstance(initial_access_token, str)
+                    or not initial_access_token.strip()):
+                raise exception.InvalidParameterValue(
+                    _('initial_access_token must be a non-empty string'))
+            if (not isinstance(https_certificate, str)
+                    or '-----BEGIN CERTIFICATE-----' not in https_certificate
+                    or '-----END CERTIFICATE-----' not in https_certificate):
+                raise exception.InvalidParameterValue(
+                    _('https_certificate must contain a PEM certificate'))
+
+        prefix = 'OpenIDConnectServer.%d.' % provider_index
+        status_attribute = prefix + 'RegistrationStatus'
+        attributes = {prefix + 'Enabled': '1' if enable_oidc else '0'}
+        if enable_oidc:
+            attributes.update({
+                prefix + 'Name': name,
+                prefix + 'DiscoveryURL': discovery_url,
+                prefix + 'RegistrationDetails':
+                    'bearer ' + initial_access_token,
+                prefix + 'HttpsCertificate': https_certificate,
+            })
+        _merge_extra_attributes(attributes, extra_attributes)
+
+        previous_status = {}
+        if enable_oidc:
+            current = drac_utils.get_dell_attributes(task, target='System')
+            previous_status = _parse_oidc_registration_status(
+                current.get(status_attribute))
+
+        drac_utils.set_dell_attributes(task, attributes, target='System')
+
+        if not enable_oidc:
+            LOG.info('Disabled OIDC provider %(index)d for node %(node)s',
+                     {'index': provider_index, 'node': task.node.uuid})
+            return
+
+        node = task.node
+        node.set_driver_internal_info(_OIDC_REGISTRATION_INFO, {
+            'provider_index': provider_index,
+            'previous_sequence': previous_status.get('Sequence'),
+            'deadline': time.time() + registration_timeout,
+        })
+        deploy_utils.set_async_step_flags(node, skip_current_step=True,
+                                          polling=True)
+        LOG.info('Configured OIDC provider %(index)d for node %(node)s; '
+                 'waiting for iDRAC to register with the provider',
+                 {'index': provider_index, 'node': node.uuid})
+        return deploy_utils.get_async_step_return_state(node)
+
+    @METRICS.timer('DracRedfishManagement._query_oidc_registration_status')
+    @periodics.node_periodic(
+        purpose='checking iDRAC OIDC dynamic client registration',
+        spacing=CONF.drac.query_oidc_registration_status_interval,
+        filters={'reserved': False, 'maintenance': False,
+                 'provision_state_in': {states.CLEANWAIT,
+                                        states.SERVICEWAIT}},
+        predicate_extra_fields=['driver_internal_info'],
+        predicate=lambda n: (
+            n.driver_internal_info.get(_OIDC_REGISTRATION_INFO)
+        ),
+    )
+    def _query_oidc_registration_status(self, task, manager, context):
+        """Periodic job to check iDRAC OIDC registration."""
+        self._check_oidc_registration(task)
+
+    def _check_oidc_registration(self, task):
+        """Check the progress of an iDRAC OIDC dynamic registration."""
+        node = task.node
+        info = node.driver_internal_info.get(_OIDC_REGISTRATION_INFO)
+        current_step = node.clean_step or node.service_step or {}
+        if current_step.get('step') != 'set_oidc_config':
+            # Left over from an earlier operation; nothing is waiting on it.
+            task.upgrade_lock()
+            task.node.del_driver_internal_info(_OIDC_REGISTRATION_INFO)
+            task.node.save()
+            return
+
+        provider_index = info['provider_index']
+        status_attribute = ('OpenIDConnectServer.%d.RegistrationStatus'
+                            % provider_index)
+        timed_out = time.time() >= info['deadline']
+        try:
+            current = drac_utils.get_dell_attributes(task, target='System')
+        except exception.RedfishError as e:
+            if not timed_out:
+                LOG.warning('Unable to read OIDC registration status for '
+                            'node %(node)s, will retry: %(error)s',
+                            {'node': node.uuid, 'error': e})
+                return
+            result, error = 'failed', str(e)
+        else:
+            status = _parse_oidc_registration_status(
+                current.get(status_attribute))
+            LOG.debug('iDRAC OIDC registration status for node %(node)s '
+                      'provider %(index)d: %(status)s',
+                      {'node': node.uuid, 'index': provider_index,
+                       'status': status})
+            result, error = _check_oidc_registration_status(
+                status, info.get('previous_sequence'))
+            if result is None:
+                if not timed_out:
+                    return
+                result = 'failed'
+                error = _('timed out waiting for registration to complete')
+
+        # upgrade_lock() reloads task.node, so use the new object from here.
+        task.upgrade_lock()
+        node = task.node
+        node.del_driver_internal_info(_OIDC_REGISTRATION_INFO)
+        node.save()
+        if result == 'success':
+            LOG.info('iDRAC registered OIDC provider %(index)d for node '
+                     '%(node)s', {'index': provider_index, 'node': node.uuid})
+            self._set_success(task)
+        else:
+            error_msg = (_('iDRAC OIDC provider %(index)d registration '
+                           'failed for node %(node)s: %(error)s') %
+                         {'index': provider_index, 'node': node.uuid,
+                          'error': error})
+            self._set_failed(task, error_msg, error_msg)

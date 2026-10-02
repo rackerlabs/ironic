@@ -43,6 +43,12 @@ opts = [
                default=60,
                help=_('Number of seconds to wait between checking for '
                       'completed import configuration task')),
+    cfg.IntOpt('query_oidc_registration_status_interval',
+               min=1,
+               default=15,
+               help=_('Number of seconds to wait between checking whether '
+                      'an iDRAC has completed OpenID Connect dynamic client '
+                      'registration')),
     cfg.IntOpt('bios_factory_reset_timeout',
                default=600,
                min=1,
