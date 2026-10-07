@@ -12,4 +12,9 @@ features:
     firmware whose attribute names differ. ``set_oidc_config`` is
     asynchronous; a periodic task, run every
     ``[drac]query_oidc_registration_status_interval`` seconds (default 15),
-    completes the step once iDRAC reports the registration outcome.
+    completes the step once iDRAC reports the registration outcome. The OIDC
+    discovery URL, initial access token and CA certificate may also be supplied
+    through ``[drac]oidc_discovery_url``,
+    ``[drac]oidc_initial_access_token`` and
+    ``[drac]oidc_https_certificate`` so runbooks do not have to store the
+    sensitive token in their step arguments.
