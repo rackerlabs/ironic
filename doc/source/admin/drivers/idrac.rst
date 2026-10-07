@@ -426,7 +426,10 @@ without a reboot. They can be run individually or bundled into a runbook:
   Arguments: ``discovery_url``, ``initial_access_token``,
   ``https_certificate`` (the PEM-encoded provider CA), ``name`` (default
   ``SSO``), ``enable_oidc`` (default ``true``), ``provider_index`` (default
-  ``1``), and ``registration_timeout`` (default ``600`` seconds).
+  ``1``), and ``registration_timeout`` (default ``600`` seconds). If
+  ``discovery_url``, ``initial_access_token`` or ``https_certificate`` are
+  omitted, the step uses ``[drac]oidc_discovery_url``,
+  ``[drac]oidc_initial_access_token`` or ``[drac]oidc_https_certificate``.
 
 Every step also accepts an ``extra_attributes`` argument -- a dictionary of
 raw Dell OEM attribute name/value pairs merged into the PATCH -- so that
@@ -449,8 +452,9 @@ that configures OIDC must run the steps in this order:
 #. ``set_ntp_servers``, so token and certificate validity checks use the
    correct time. For example, use ``["192.0.2.123", "192.0.2.124"]`` and
    timezone ``UTC``.
-#. ``set_oidc_config``, including the discovery URL, initial access token,
-   and CA certificate. iDRAC takes several minutes to discover the provider
+#. ``set_oidc_config``. Prefer configuring the discovery URL, initial access
+   token and CA certificate in the conductor's ``[drac]`` config and omitting
+   them from the runbook. iDRAC takes several minutes to discover the provider
    and register with it, so the step is asynchronous: the node waits in
    ``clean wait`` or ``service wait`` while a periodic task polls the
    registration status every
@@ -460,8 +464,9 @@ that configures OIDC must run the steps in this order:
    ``registration_timeout`` expires.
 
 .. warning::
-   The ``initial_access_token`` argument is not redacted by Ironic. It is
-   exposed in plaintext in:
+   Do not put ``initial_access_token`` in a runbook. Runbooks and node step
+   state store step arguments, so a token passed as a step argument is exposed
+   in plaintext in:
 
    * the node's ``clean_step`` or ``service_step`` field, in the database
      and in the API, while the step runs;
@@ -471,9 +476,9 @@ that configures OIDC must run the steps in this order:
    * node notifications, when notifications are enabled;
    * runbooks stored in the database, if the token is placed in a runbook.
 
-   Limit the token's lifetime and registration privileges, protect access to
-   nodes, runbooks, logs, notifications and the database, and rotate or
-   revoke the token when it is no longer needed.
+   Use ``[drac]oidc_initial_access_token`` instead, load it from protected
+   service configuration, limit the token's lifetime and registration
+   privileges, and rotate or revoke the token when it is no longer needed.
 
 .. note::
    The attribute names used by these steps target iDRAC9. If a step reports
