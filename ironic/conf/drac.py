@@ -49,6 +49,19 @@ opts = [
                help=_('Number of seconds to wait between checking whether '
                       'an iDRAC has completed OpenID Connect dynamic client '
                       'registration')),
+    cfg.StrOpt('oidc_discovery_url',
+               help=_('Default OpenID Connect provider discovery URL used by '
+                      'the idrac-redfish set_oidc_config clean and service '
+                      'step when discovery_url is omitted.')),
+    cfg.StrOpt('oidc_initial_access_token',
+               secret=True,
+               help=_('Default RFC 7591 initial access token used by the '
+                      'idrac-redfish set_oidc_config clean and service step '
+                      'when initial_access_token is omitted.')),
+    cfg.StrOpt('oidc_https_certificate',
+               help=_('Default PEM-encoded CA certificate used by the '
+                      'idrac-redfish set_oidc_config clean and service step '
+                      'when https_certificate is omitted.')),
     cfg.IntOpt('bios_factory_reset_timeout',
                default=600,
                min=1,
