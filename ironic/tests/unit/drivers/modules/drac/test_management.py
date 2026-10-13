@@ -958,6 +958,41 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         self.assertTrue(info['servicing_polling'])
         self.assertTrue(info['skip_current_service_step'])
 
+    @mock.patch.object(drac_mgmt.time, 'time', autospec=True,
+                       return_value=1000.0)
+    @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
+                       autospec=True)
+    @mock.patch.object(drac_mgmt.drac_utils, 'get_dell_attributes',
+                       autospec=True)
+    def test_set_oidc_config_from_config(self, mock_get_attrs,
+                                         mock_set_attrs, mock_time):
+        self.config(oidc_discovery_url='https://idp/.well-known/'
+                                       'openid-configuration',
+                    oidc_initial_access_token='configured-token',
+                    oidc_https_certificate=_OIDC_CERTIFICATE,
+                    group='drac')
+        mock_get_attrs.return_value = {}
+        step = {'interface': 'management', 'step': 'set_oidc_config'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            task.node.service_step = step
+            result = task.driver.management.set_oidc_config(
+                task, name='corp-sso')
+            info = task.node.driver_internal_info
+        mock_set_attrs.assert_called_once_with(mock.ANY, {
+            'OpenIDConnectServer.1.Enabled': '1',
+            'OpenIDConnectServer.1.Name': 'corp-sso',
+            'OpenIDConnectServer.1.DiscoveryURL':
+                'https://idp/.well-known/openid-configuration',
+            'OpenIDConnectServer.1.RegistrationDetails':
+                'bearer configured-token',
+            'OpenIDConnectServer.1.HttpsCertificate': _OIDC_CERTIFICATE,
+        }, target='System')
+        self.assertEqual(states.SERVICEWAIT, result)
+        self.assertEqual({'provider_index': 1, 'previous_sequence': None,
+                          'deadline': 1600.0},
+                         info['oidc_registration'])
+
     @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
                        autospec=True)
     def test_set_oidc_config_missing_token(self, mock_set_attrs):

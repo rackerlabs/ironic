@@ -165,19 +165,22 @@ _SET_OIDC_ARGSINFO = {
     'discovery_url': {
         'description': (
             'The OpenID Connect provider discovery URL '
-            '(.well-known/openid-configuration).'),
+            '(.well-known/openid-configuration). If omitted, '
+            '[drac]oidc_discovery_url is used.'),
         'required': False,
     },
     'initial_access_token': {
         'description': (
             'The RFC 7591 initial access token used by iDRAC to register '
-            'itself with the provider. This value is stored in the runbook '
-            'step arguments.'),
+            'itself with the provider. If omitted, '
+            '[drac]oidc_initial_access_token is used. Passing this value as '
+            'a step argument stores it in Ironic step state.'),
         'required': False,
     },
     'https_certificate': {
         'description': (
-            'The PEM-encoded CA certificate used to validate the provider.'),
+            'The PEM-encoded CA certificate used to validate the provider. '
+            'If omitted, [drac]oidc_https_certificate is used.'),
         'required': False,
     },
     'name': {
@@ -761,31 +764,9 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         drac_utils.set_dell_attributes(task, attributes, target='iDRAC')
         LOG.info('Set DNS servers for node %(node)s', {'node': task.node.uuid})
 
-    # TODO(cardoe): The initial_access_token step argument is not redacted
-    # in the following places. Each must be fixed before this step lands:
-    #
-    # * node.clean_step / node.service_step: stored in the database and
-    #   returned unmasked by the node API while the step runs.
-    # * node.driver_internal_info clean_steps / service_steps: stored as
-    #   plaintext in the database (the node API does mask them).
-    # * node.last_error and node history: when the step raises (e.g. an
-    #   invalid argument or a rejected PATCH), the conductor embeds the
-    #   full step dict, args included, in the error message
-    #   (do_next_clean_step in conductor/cleaning.py,
-    #   do_next_service_step in conductor/servicing.py), which
-    #   cleaning_error_handler / servicing_error_handler in
-    #   conductor/utils.py store and log at ERROR.
-    # * Conductor logs: the "remaining steps", "Executing <step>" and
-    #   "finished ... step <step>" INFO messages in conductor/cleaning.py
-    #   and conductor/servicing.py, and the step list DEBUG messages in
-    #   conductor/steps.py.
-    # * Notifications: the node notification payload carries clean_step
-    #   and last_error (NodePayload in objects/node.py).
-    # * Runbooks: stored as plaintext in the database (the runbook API does
-    #   mask args).
-    # * BMC errors: if the iDRAC rejects the PATCH, the error raised by
-    #   drac_utils.set_dell_attributes includes sushy's message, which may
-    #   echo the rejected RegistrationDetails value.
+    # Runbooks and node step state store step arguments, so production
+    # runbooks should omit initial_access_token and use the secret config
+    # option instead.
     @METRICS.timer('DracRedfishManagement.set_oidc_config')
     @base.clean_step(priority=0, argsinfo=_SET_OIDC_ARGSINFO,
                      requires_ramdisk=False)
@@ -803,9 +784,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         iDRAC uses the initial access token to dynamically register an RFC
         7591 client. Registration takes minutes, so the step is asynchronous:
         it returns a wait state and a periodic task completes it once iDRAC
-        reports the outcome. This step does not log attribute values, but
-        the token is part of the step arguments and so is recorded wherever
-        Ironic records those (see the TODO above).
+        reports the outcome. Omit the provider values from the step to use
+        the corresponding [drac] OIDC config options.
 
         :param task: a TaskManager instance containing the node to act on.
         :param discovery_url: the provider discovery URL.
@@ -838,6 +818,12 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             raise exception.InvalidParameterValue(
                 _('registration_timeout must be a positive number'))
         if enable_oidc:
+            if discovery_url is None:
+                discovery_url = CONF.drac.oidc_discovery_url
+            if initial_access_token is None:
+                initial_access_token = CONF.drac.oidc_initial_access_token
+            if https_certificate is None:
+                https_certificate = CONF.drac.oidc_https_certificate
             if (not isinstance(discovery_url, str)
                     or not discovery_url.startswith('https://')):
                 raise exception.InvalidParameterValue(
