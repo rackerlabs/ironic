@@ -994,6 +994,27 @@ class TestListNodes(test_api_base.BaseApiTest):
         self.assertEqual('******', dii['agent_secret_token'])
         self.assertEqual('******', dii['agent_secret_token_pregenerated'])
 
+    def test_get_one_masks_step_secrets(self):
+        step = {'interface': 'management', 'step': 'set_oidc_config',
+                'args': {'initial_access_token': 'tok', 'name': 'SSO'}}
+        node = obj_utils.create_test_node(
+            self.context, clean_step=step, service_step=step,
+            driver_internal_info={'clean_steps': [step],
+                                  'service_steps': [step]})
+        response = self.get_json(
+            '/nodes/%s' % node.uuid,
+            headers={api_base.Version.string: str(api_v1.max_version())})
+        masked = {'initial_access_token': '******', 'name': 'SSO'}
+        dii = response['driver_internal_info']
+        self.assertEqual(masked, dii['clean_steps'][0]['args'])
+        self.assertEqual(masked, dii['service_steps'][0]['args'])
+        self.assertEqual(masked, response['clean_step']['args'])
+        self.assertEqual(masked, response['service_step']['args'])
+        # The stored node is left alone.
+        node.refresh()
+        self.assertEqual('tok',
+                         node.clean_step['args']['initial_access_token'])
+
     def test_get_disable_power_off_fields(self):
         node = obj_utils.create_test_node(self.context,
                                           disable_power_off=True)
