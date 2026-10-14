@@ -1,0 +1,8 @@
+---
+fixes:
+  - |
+    Secret step arguments, such as the ``initial_access_token`` used by the
+    iDRAC ``set_oidc_config`` step, are now masked in the ``clean_step``,
+    ``deploy_step`` and ``service_step`` node fields and in the lists of
+    steps in ``driver_internal_info``. Previously they were visible there,
+    because values inside lists were not masked.
