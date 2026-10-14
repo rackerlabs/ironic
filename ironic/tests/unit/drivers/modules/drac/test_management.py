@@ -958,6 +958,13 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
                          info['oidc_registration'])
         return result, info
 
+    def test_set_oidc_config_abortable(self):
+        method = drac_mgmt.DracRedfishManagement.set_oidc_config
+        self.assertTrue(method._is_clean_step)
+        self.assertTrue(method._clean_step_abortable)
+        self.assertTrue(method._is_service_step)
+        self.assertTrue(method._service_step_abortable)
+
     def test_set_oidc_config_clean(self):
         result, info = self._test_set_oidc_config()
         self.assertEqual(states.CLEANWAIT, result)
@@ -1265,6 +1272,31 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         info = self._check_oidc()
         self.assertNotIn('oidc_registration', info)
         self.assertFalse(mock_get_attrs.called)
+
+    @mock.patch.object(task_manager, 'acquire', autospec=True)
+    def test__clear_oidc_registration_aborted(self, mock_acquire):
+        self._setup_oidc_wait()
+        # Aborting wipes the current step and leaves the wait state.
+        self.node.clean_step = None
+        self.node.provision_state = states.CLEANFAIL
+        self.node.save()
+        mock_manager = mock.Mock()
+        mock_manager.iter_nodes.return_value = [
+            (self.node.uuid, 'idrac', '', self.node.driver_internal_info)]
+        task = mock.Mock(node=self.node,
+                         driver=mock.Mock(management=self.management))
+        mock_acquire.return_value = mock.MagicMock(
+            __enter__=mock.MagicMock(return_value=task))
+
+        self.management._clear_oidc_registration_aborted(
+            mock_manager, self.context)
+
+        task.upgrade_lock.assert_called_once_with()
+        self.node.refresh()
+        self.assertNotIn('oidc_registration', self.node.driver_internal_info)
+        filters = mock_manager.iter_nodes.call_args[1]['filters']
+        self.assertEqual({states.CLEANFAIL, states.SERVICEFAIL},
+                         filters['provision_state_in'])
 
     @mock.patch.object(task_manager, 'acquire', autospec=True)
     def test__query_oidc_registration_status(self, mock_acquire):

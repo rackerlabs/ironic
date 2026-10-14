@@ -790,9 +790,9 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
     # runbooks should omit initial_access_token and use the secret config
     # option instead.
     @METRICS.timer('DracRedfishManagement.set_oidc_config')
-    @base.clean_step(priority=0, argsinfo=_SET_OIDC_ARGSINFO,
-                     requires_ramdisk=False)
-    @base.service_step(priority=0, abortable=False,
+    @base.clean_step(priority=0, abortable=True,
+                     argsinfo=_SET_OIDC_ARGSINFO, requires_ramdisk=False)
+    @base.service_step(priority=0, abortable=True,
                        argsinfo=_SET_OIDC_ARGSINFO, requires_ramdisk=False)
     def set_oidc_config(self, task, discovery_url=None,
                         initial_access_token=None, https_certificate=None,
@@ -919,6 +919,28 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
     def _query_oidc_registration_status(self, task, manager, context):
         """Periodic job to check iDRAC OIDC registration."""
         self._check_oidc_registration(task)
+
+    @METRICS.timer('DracRedfishManagement._clear_oidc_registration_aborted')
+    @periodics.node_periodic(
+        purpose='cleaning up aborted iDRAC OIDC dynamic client registration',
+        spacing=CONF.drac.query_oidc_registration_status_interval,
+        filters={'reserved': False,
+                 'provision_state_in': {states.CLEANFAIL,
+                                        states.SERVICEFAIL}},
+        predicate_extra_fields=['driver_internal_info'],
+        predicate=lambda n: (
+            n.driver_internal_info.get(_OIDC_REGISTRATION_INFO)
+        ),
+    )
+    def _clear_oidc_registration_aborted(self, task, manager, context):
+        """Periodic job to discard the state of an aborted registration.
+
+        Aborting the set_oidc_config step leaves its registration state in
+        driver_internal_info, and nothing is waiting on it any more.
+        """
+        task.upgrade_lock()
+        task.node.del_driver_internal_info(_OIDC_REGISTRATION_INFO)
+        task.node.save()
 
     def _check_oidc_registration(self, task):
         """Check the progress of an iDRAC OIDC dynamic registration."""
