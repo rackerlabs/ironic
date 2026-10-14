@@ -729,17 +729,21 @@ def get_rpc_runbook(runbook_ident):
     raise exception.InvalidUuidOrName(name=runbook_ident)
 
 
-def check_runbook_policy_and_retrieve(policy_name, runbook_ident):
+def check_runbook_policy_and_retrieve(policy_name, runbook_ident,
+                                      public=False):
     """Check if the specified policy authorizes this request on a node.
 
     :param: policy_name: Name of the policy to check.
     :param: runbook_ident: the UUID or logical name of a runbook.
+    :param: public: permit public runbooks without a policy check
 
     :raises: HTTPForbidden if the policy forbids access.
     :raises: RunbookNotFound if the runbook is not found.
     :return: a runbook object
     """
     rpc_runbook = get_rpc_runbook(runbook_ident)
+    if public and rpc_runbook.public:
+        return rpc_runbook
     check_owner_policy(object_type='runbook', policy_name=policy_name,
                        owner=rpc_runbook['owner'])
     return rpc_runbook
