@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    The iDRAC ``set_oidc_config`` clean and service step can now be aborted
+    while it waits for the iDRAC to complete OpenID Connect dynamic client
+    registration. The registration state it stored on the node is cleaned up
+    by a periodic task after an abort.
