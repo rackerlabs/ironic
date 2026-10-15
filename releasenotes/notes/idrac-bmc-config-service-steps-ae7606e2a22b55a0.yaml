@@ -16,5 +16,5 @@ features:
     discovery URL, initial access token and CA certificate may also be supplied
     through ``[drac]oidc_discovery_url``,
     ``[drac]oidc_initial_access_token`` and
-    ``[drac]oidc_https_certificate`` so runbooks do not have to store the
+    ``[drac]oidc_https_certificate_file`` so runbooks do not have to store the
     sensitive token in their step arguments.
