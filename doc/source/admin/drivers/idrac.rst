@@ -429,7 +429,14 @@ without a reboot. They can be run individually or bundled into a runbook:
   ``1``), and ``registration_timeout`` (default ``600`` seconds). If
   ``discovery_url``, ``initial_access_token`` or ``https_certificate`` are
   omitted, the step uses ``[drac]oidc_discovery_url``,
-  ``[drac]oidc_initial_access_token`` or ``[drac]oidc_https_certificate``.
+  ``[drac]oidc_initial_access_token`` or
+  ``[drac]oidc_https_certificate_file``.
+  ``[drac]oidc_https_certificate_file`` is the path to a file containing the
+  PEM-encoded certificate; the file is read each time the step runs, so it
+  can be updated without restarting the conductor.
+  ``https_certificate`` is optional: if it is not passed and
+  ``[drac]oidc_https_certificate_file`` is unset (the default) or empty, no
+  certificate is sent to the iDRAC.
 
 Every step also accepts an ``extra_attributes`` argument -- a dictionary of
 raw Dell OEM attribute name/value pairs merged into the PATCH -- so that

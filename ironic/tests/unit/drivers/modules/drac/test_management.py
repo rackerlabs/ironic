@@ -21,6 +21,8 @@ Test class for DRAC management interface
 """
 
 import json
+import os
+import tempfile
 from unittest import mock
 
 import sushy
@@ -60,6 +62,16 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         self.config(enabled_hardware_types=['idrac'],
                     enabled_power_interfaces=['idrac-redfish'],
                     enabled_management_interfaces=['idrac-redfish'])
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.certificate_dir = tmp.name
+
+    def _write_certificate(self, contents):
+        path = os.path.join(self.certificate_dir, 'oidc-ca.pem')
+        with open(path, 'w') as cert_file:
+            cert_file.write(contents)
+        return path
 
     def test_export_configuration_name_missing(self):
         task = mock.Mock(node=self.node, context=self.context)
@@ -966,10 +978,11 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
                        autospec=True)
     def test_set_oidc_config_from_config(self, mock_get_attrs,
                                          mock_set_attrs, mock_time):
+        cert_path = self._write_certificate(_OIDC_CERTIFICATE)
         self.config(oidc_discovery_url='https://idp/.well-known/'
                                        'openid-configuration',
                     oidc_initial_access_token='configured-token',
-                    oidc_https_certificate=_OIDC_CERTIFICATE,
+                    oidc_https_certificate_file=cert_path,
                     group='drac')
         mock_get_attrs.return_value = {}
         step = {'interface': 'management', 'step': 'set_oidc_config'}
@@ -992,6 +1005,88 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         self.assertEqual({'provider_index': 1, 'previous_sequence': None,
                           'deadline': 1600.0},
                          info['oidc_registration'])
+
+    @mock.patch.object(drac_mgmt.time, 'time', autospec=True,
+                       return_value=1000.0)
+    @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
+                       autospec=True)
+    @mock.patch.object(drac_mgmt.drac_utils, 'get_dell_attributes',
+                       autospec=True)
+    def _test_set_oidc_config_no_certificate(self, mock_get_attrs,
+                                             mock_set_attrs, mock_time,
+                                             **kwargs):
+        self.config(oidc_discovery_url='https://idp/.well-known/'
+                                       'openid-configuration',
+                    oidc_initial_access_token='configured-token',
+                    group='drac')
+        mock_get_attrs.return_value = {}
+        step = {'interface': 'management', 'step': 'set_oidc_config'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            task.node.service_step = step
+            result = task.driver.management.set_oidc_config(task, **kwargs)
+        mock_set_attrs.assert_called_once_with(mock.ANY, {
+            'OpenIDConnectServer.1.Enabled': '1',
+            'OpenIDConnectServer.1.Name': 'SSO',
+            'OpenIDConnectServer.1.DiscoveryURL':
+                'https://idp/.well-known/openid-configuration',
+            'OpenIDConnectServer.1.RegistrationDetails':
+                'bearer configured-token',
+        }, target='System')
+        self.assertEqual(states.SERVICEWAIT, result)
+
+    def test_set_oidc_config_certificate_unset(self):
+        self._test_set_oidc_config_no_certificate()
+
+    def test_set_oidc_config_certificate_empty_file(self):
+        self.config(oidc_https_certificate_file=self._write_certificate(''),
+                    group='drac')
+        self._test_set_oidc_config_no_certificate()
+
+    def test_set_oidc_config_certificate_file_reread(self):
+        cert_path = self._write_certificate(_OIDC_CERTIFICATE)
+        self.config(oidc_https_certificate_file=cert_path, group='drac')
+        self.assertEqual(_OIDC_CERTIFICATE,
+                         drac_mgmt._read_oidc_https_certificate_file())
+        with open(cert_path, 'w') as cert_file:
+            cert_file.write('updated')
+        self.assertEqual('updated',
+                         drac_mgmt._read_oidc_https_certificate_file())
+
+    @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
+                       autospec=True)
+    def test_set_oidc_config_certificate_file_missing(self, mock_set_attrs):
+        self.config(oidc_https_certificate_file=os.path.join(
+            self.certificate_dir, 'missing.pem'), group='drac')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaisesRegex(
+                exception.InvalidParameterValue,
+                'oidc_https_certificate_file',
+                task.driver.management.set_oidc_config, task,
+                discovery_url='https://idp/.well-known/openid-configuration',
+                initial_access_token='token')
+        self.assertFalse(mock_set_attrs.called)
+
+    def test_set_oidc_config_certificate_empty_config(self):
+        self.config(oidc_https_certificate_file='', group='drac')
+        self._test_set_oidc_config_no_certificate()
+
+    def test_set_oidc_config_certificate_blank_argument(self):
+        self._test_set_oidc_config_no_certificate(https_certificate='  \n')
+
+    @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
+                       autospec=True)
+    def test_set_oidc_config_invalid_certificate(self, mock_set_attrs):
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaisesRegex(
+                exception.InvalidParameterValue, 'https_certificate',
+                task.driver.management.set_oidc_config, task,
+                discovery_url='https://idp/.well-known/openid-configuration',
+                initial_access_token='token',
+                https_certificate='not a certificate')
+        self.assertFalse(mock_set_attrs.called)
 
     @mock.patch.object(drac_mgmt.drac_utils, 'set_dell_attributes',
                        autospec=True)
