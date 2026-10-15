@@ -1,0 +1,15 @@
+---
+features:
+  - |
+    The ``set_oidc_config`` iDRAC management step no longer requires an
+    ``https_certificate``. If the argument is omitted and
+    ``[drac]oidc_https_certificate_file`` is unset (the default) or the file
+    is empty, the ``HttpsCertificate`` attribute is not sent to the iDRAC,
+    which then uses its own trust store. A certificate that is provided must
+    still contain a PEM certificate.
+  - |
+    The default OIDC CA certificate for the ``set_oidc_config`` iDRAC
+    management step is now configured with
+    ``[drac]oidc_https_certificate_file``, the path to a file containing the
+    PEM-encoded certificate. The file is read each time the step runs, so it
+    can be updated without restarting the conductor.
