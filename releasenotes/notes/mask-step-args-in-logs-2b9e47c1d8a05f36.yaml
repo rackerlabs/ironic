@@ -1,0 +1,7 @@
+---
+security:
+  - |
+    Secret step arguments, such as the ``initial_access_token`` used by the
+    iDRAC ``set_oidc_config`` step, are now masked when the conductor logs a
+    step or a list of steps, and in step error messages. Previously the
+    steps were logged with all of their arguments.

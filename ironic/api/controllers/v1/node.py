@@ -36,6 +36,7 @@ from ironic.api.controllers.v1 import firmware
 from ironic.api.controllers.v1 import notification_utils as notify
 from ironic.api.controllers.v1 import port
 from ironic.api.controllers.v1 import portgroup
+from ironic.api.controllers.v1 import runbook
 from ironic.api.controllers.v1 import utils as api_utils
 from ironic.api.controllers.v1 import versions
 from ironic.api.controllers.v1 import volume
@@ -1011,7 +1012,8 @@ class NodeStatesController(rest.RestController):
 
         rpc_runbook = api_utils.check_runbook_policy_and_retrieve(
             policy_name='baremetal:runbook:use',
-            runbook_ident=runbook)
+            runbook_ident=runbook,
+            public=True)
 
         traits = objects.TraitList.get_by_node_id(api.request.context,
                                                   rpc_node.id)
@@ -1921,6 +1923,9 @@ def node_sanitize(node, fields, cdict=None,
         node['driver_internal_info'] = strutils.mask_dict_password(
             node['driver_internal_info'], "******")
 
+    if not show_driver_secrets:
+        _sanitize_node_steps(node)
+
     if 'provision_state' in node_keys:
         # Update legacy state data for provision state, but only if
         # the key is present.
@@ -1965,6 +1970,25 @@ def _node_sanitize_extended(node, node_keys, target_dict, cdict):
         node['driver_internal_info'] = {
             'content': '** Redacted - Requires baremetal:node:get:'
                        'driver_internal_info permission. **'}
+
+
+def _sanitize_node_steps(node):
+    """Mask secret step arguments in a node's current and pending steps.
+
+    mask_dict_password() does not look inside lists, so the lists of steps in
+    driver_internal_info are sanitized here, as are the current step fields.
+    """
+    internal_info = node.get('driver_internal_info')
+    if internal_info:
+        for key in ('clean_steps', 'deploy_steps', 'service_steps'):
+            if isinstance(internal_info.get(key), list):
+                internal_info[key] = copy.deepcopy(internal_info[key])
+                for step in internal_info[key]:
+                    runbook.step_sanitize(step)
+    for key in ('clean_step', 'deploy_step', 'service_step'):
+        if node.get(key):
+            node[key] = copy.deepcopy(node[key])
+            runbook.step_sanitize(node[key])
 
 
 def _mask_fields(dictionary, fields, secret):

@@ -3552,3 +3552,31 @@ class NodeCacheHealthTestCase(db_base.DbTestCase):
         self.assertEqual(health_states.HealthState.OK.value, self.node.health)
         # Verify history was recorded
         mock_history.assert_called_once()
+
+
+class SanitizeStepsTestCase(tests_base.TestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.step = {'interface': 'management', 'step': 'set_oidc_config',
+                     'args': {'initial_access_token': 'tok', 'name': 'SSO'}}
+
+    def test_sanitize_step(self):
+        result = conductor_utils.sanitize_steps(self.step)
+        self.assertEqual({'interface': 'management',
+                          'step': 'set_oidc_config',
+                          'args': {'initial_access_token': '***',
+                                   'name': 'SSO'}}, result)
+        # The step that will be run is left alone.
+        self.assertEqual('tok', self.step['args']['initial_access_token'])
+
+    def test_sanitize_steps(self):
+        result = conductor_utils.sanitize_steps([self.step, {'step': 'x'}])
+        self.assertEqual('***',
+                         result[0]['args']['initial_access_token'])
+        self.assertEqual({'step': 'x'}, result[1])
+        self.assertEqual('tok', self.step['args']['initial_access_token'])
+
+    def test_sanitize_other(self):
+        self.assertIsNone(conductor_utils.sanitize_steps(None))
+        self.assertEqual({}, conductor_utils.sanitize_steps({}))
