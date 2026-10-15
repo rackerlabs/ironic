@@ -180,7 +180,8 @@ _SET_OIDC_ARGSINFO = {
     'https_certificate': {
         'description': (
             'The PEM-encoded CA certificate used to validate the provider. '
-            'If omitted, [drac]oidc_https_certificate is used.'),
+            'If omitted, the contents of the file named by '
+            '[drac]oidc_https_certificate_file are used, if set.'),
         'required': False,
     },
     'name': {
@@ -238,6 +239,27 @@ def _validate_server_list(name, values, maximum, required):
            for value in values):
         raise exception.InvalidParameterValue(
             _('%(name)s entries must be non-empty strings') % {'name': name})
+
+
+def _read_oidc_https_certificate_file():
+    """Read the file named by [drac]oidc_https_certificate_file.
+
+    The file is read on every call so that its contents can be changed
+    without restarting the conductor.
+
+    :raises: InvalidParameterValue if the file cannot be read.
+    :returns: the file contents, or None if the option is unset or empty.
+    """
+    path = CONF.drac.oidc_https_certificate_file
+    if not path:
+        return None
+    try:
+        with open(path, encoding='utf-8') as cert_file:
+            return cert_file.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise exception.InvalidParameterValue(
+            _('Unable to read [drac]oidc_https_certificate_file '
+              '%(path)s: %(error)s') % {'path': path, 'error': exc})
 
 
 def _merge_extra_attributes(attributes, extra_attributes):
@@ -823,7 +845,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             if initial_access_token is None:
                 initial_access_token = CONF.drac.oidc_initial_access_token
             if https_certificate is None:
-                https_certificate = CONF.drac.oidc_https_certificate
+                https_certificate = _read_oidc_https_certificate_file()
             if (not isinstance(discovery_url, str)
                     or not discovery_url.startswith('https://')):
                 raise exception.InvalidParameterValue(
@@ -832,7 +854,11 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                     or not initial_access_token.strip()):
                 raise exception.InvalidParameterValue(
                     _('initial_access_token must be a non-empty string'))
-            if (not isinstance(https_certificate, str)
+            if isinstance(https_certificate, str) and \
+                    not https_certificate.strip():
+                https_certificate = None
+            if https_certificate is not None and (
+                    not isinstance(https_certificate, str)
                     or '-----BEGIN CERTIFICATE-----' not in https_certificate
                     or '-----END CERTIFICATE-----' not in https_certificate):
                 raise exception.InvalidParameterValue(
@@ -847,8 +873,9 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                 prefix + 'DiscoveryURL': discovery_url,
                 prefix + 'RegistrationDetails':
                     'bearer ' + initial_access_token,
-                prefix + 'HttpsCertificate': https_certificate,
             })
+            if https_certificate is not None:
+                attributes[prefix + 'HttpsCertificate'] = https_certificate
         _merge_extra_attributes(attributes, extra_attributes)
 
         previous_status = {}
