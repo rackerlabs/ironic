@@ -1417,6 +1417,14 @@ def allow_bios_interface():
     return api.request.version.minor >= versions.MINOR_40_BIOS_INTERFACE
 
 
+def allow_bmc_settings():
+    """Check if we should support the bmc settings endpoints.
+
+    Version 1.116 of the API added support for the BMC settings resource.
+    """
+    return api.request.version.minor >= versions.MINOR_116_BMC_SETTINGS
+
+
 def get_controller_reserved_names(cls):
     """Get reserved names for a given controller.
 

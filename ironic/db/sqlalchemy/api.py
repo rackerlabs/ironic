@@ -2405,6 +2405,102 @@ class Connection(api.Connection):
                       .all())
         return result
 
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def create_bmc_setting_list(self, node_id, settings, version):
+        bmc_settings = []
+        with _session_for_write() as session:
+            self._check_node_exists(session, node_id)
+            try:
+                for setting in settings:
+                    bmc_setting = models.BMCSetting(
+                        node_id=node_id,
+                        name=setting['name'],
+                        value=setting['value'],
+                        attribute_type=setting.get('attribute_type'),
+                        allowable_values=setting.get('allowable_values'),
+                        lower_bound=setting.get('lower_bound'),
+                        max_length=setting.get('max_length'),
+                        min_length=setting.get('min_length'),
+                        read_only=setting.get('read_only'),
+                        reset_required=setting.get('reset_required'),
+                        unique=setting.get('unique'),
+                        upper_bound=setting.get('upper_bound'),
+                        version=version)
+                    bmc_settings.append(bmc_setting)
+                    session.add(bmc_setting)
+                session.flush()
+            except db_exc.DBDuplicateEntry:
+                raise exception.BMCSettingAlreadyExists(
+                    node=node_id, name=setting['name'])
+        return bmc_settings
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def update_bmc_setting_list(self, node_id, settings, version):
+        bmc_settings = []
+        with _session_for_write() as session:
+            self._check_node_exists(session, node_id)
+            try:
+                for setting in settings:
+                    query = session.query(models.BMCSetting).filter_by(
+                        node_id=node_id, name=setting['name'])
+                    ref = query.one()
+                    ref.update({'value': setting['value'],
+                                'attribute_type':
+                                setting.get('attribute_type'),
+                                'allowable_values':
+                                setting.get('allowable_values'),
+                                'lower_bound': setting.get('lower_bound'),
+                                'max_length': setting.get('max_length'),
+                                'min_length': setting.get('min_length'),
+                                'read_only': setting.get('read_only'),
+                                'reset_required':
+                                setting.get('reset_required'),
+                                'unique': setting.get('unique'),
+                                'upper_bound': setting.get('upper_bound'),
+                                'version': version})
+                    bmc_settings.append(ref)
+                session.flush()
+            except NoResultFound:
+                raise exception.BMCSettingNotFound(
+                    node=node_id, name=setting['name'])
+        return bmc_settings
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def delete_bmc_setting_list(self, node_id, names):
+        missing_bmc_settings = []
+        with _session_for_write() as session:
+            self._check_node_exists(session, node_id)
+            for name in names:
+                count = session.query(models.BMCSetting).filter_by(
+                    node_id=node_id, name=name).delete()
+                if count == 0:
+                    missing_bmc_settings.append(name)
+        if len(missing_bmc_settings) > 0:
+            raise exception.BMCSettingListNotFound(
+                node=node_id, names=','.join(missing_bmc_settings))
+
+    def get_bmc_setting(self, node_id, name):
+        with _session_for_read() as session:
+            self._check_node_exists(session, node_id)
+            query = session.query(models.BMCSetting).filter_by(
+                node_id=node_id, name=name)
+            try:
+                ref = query.one()
+            except NoResultFound:
+                raise exception.BMCSettingNotFound(node=node_id, name=name)
+        return ref
+
+    def get_bmc_setting_list(self, node_id):
+        with _session_for_read() as session:
+            self._check_node_exists(session, node_id)
+            result = (session.query(models.BMCSetting)
+                      .filter_by(node_id=node_id)
+                      .all())
+        return result
+
     def get_allocation_by_id(self, allocation_id):
         """Return an allocation representation.
 

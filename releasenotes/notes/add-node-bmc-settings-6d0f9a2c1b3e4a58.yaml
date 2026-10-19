@@ -1,0 +1,43 @@
+---
+features:
+  - |
+    Adds support for managing BMC (management controller) settings separately
+    from BIOS settings, available at API microversion 1.116. BMC settings are
+    structurally identical to BIOS settings but describe the configuration of
+    the management controller itself. The following endpoints are added:
+
+    * ``GET /v1/nodes/{node_ident}/bmc`` lists a node's cached BMC settings.
+    * ``GET /v1/nodes/{node_ident}/bmc/{setting_name}`` returns a single
+      setting.
+
+    Redfish defines no standard location for a Manager's own configuration
+    attributes, so BMC settings are only available on hardware types whose
+    management interface knows where its vendor keeps them. The ``idrac``
+    hardware type reads them from the Dell OEM ``DellAttributes`` resource
+    named for the iDRAC itself, and can apply them through the
+    ``apply_bmc_settings`` clean/deploy step on the ``management`` interface.
+    The generic ``redfish`` management interface reports BMC settings as
+    unsupported.
+security:
+  - |
+    Access to BMC settings is more restricted than access to BIOS settings.
+    The new ``baremetal:node:bmc:get`` policy defaults to
+    ``SYSTEM_ADMIN_OR_OWNER_ADMIN``: only the system and the node's owner
+    administrator (or the service role) may read BMC settings. A lessee or a
+    plain project reader cannot access them. This keeps the operator's
+    out-of-band management configuration out of tenant reach.
+  - |
+    BMC attributes that hold credential material are never cached, so they
+    are neither written to the database nor served by the API. A BMC may
+    return such values in the clear - an iDRAC, for instance, returns SNMPv3
+    localized keys, IPMI keys, and account password hashes with their salts,
+    even though it withholds the write-only passwords themselves. Attributes
+    are excluded by name, covering those ending in ``Password``, ``Salt``,
+    ``Passphrase``, ``Key``, ``Secret`` or ``Credential``. For the same
+    reason
+    ``apply_bmc_settings`` rejects any such setting, as step arguments are
+    recorded on the node and exposed through the API.
+upgrade:
+  - |
+    A database migration adds the ``bmc_settings`` table. Run
+    ``ironic-dbsync upgrade`` as part of the upgrade.

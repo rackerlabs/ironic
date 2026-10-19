@@ -23,6 +23,7 @@ from ironic.db import api as db_api
 from ironic.drivers import base as drivers_base
 from ironic.objects import allocation
 from ironic.objects import bios
+from ironic.objects import bmc
 from ironic.objects import chassis
 from ironic.objects import conductor
 from ironic.objects import deploy_template
@@ -589,7 +590,7 @@ def get_test_bios_setting(**kw):
         'allowable_values': kw.get('allowable_values', ['on', 'off']),
         'lower_bound': kw.get('lower_bound', None),
         'max_length': kw.get('max_length', None),
-        'min_length': kw.get('max_length', None),
+        'min_length': kw.get('min_length', None),
         'read_only': kw.get('read_only', False),
         'reset_required': kw.get('reset_required', True),
         'unique': kw.get('unique', False),
@@ -605,6 +606,58 @@ def get_test_bios_setting_setting_list():
         {'name': 'virtualization', 'value': 'on'},
         {'name': 'hyperthread', 'value': 'enabled'},
         {'name': 'numlock', 'value': 'off'}
+    ]
+
+
+def create_test_bmc_setting(**kw):
+    """Create test bmc entry in DB and return BMCSetting DB object.
+
+    Function to be used to create test BMCSetting object in the database.
+
+    :param kw: kwargs with overriding values for node bmc settings.
+    :returns: Test BMCSetting DB object.
+
+    """
+    bmc_setting = get_test_bmc_setting(**kw)
+    dbapi = db_api.get_instance()
+    node_id = bmc_setting['node_id']
+    version = bmc_setting['version']
+    settings = [{'name': bmc_setting['name'],
+                 'value': bmc_setting['value'],
+                 'attribute_type': bmc_setting['attribute_type'],
+                 'allowable_values': bmc_setting['allowable_values'],
+                 'read_only': bmc_setting['read_only'],
+                 'reset_required': bmc_setting['reset_required'],
+                 'unique': bmc_setting['unique']}]
+    return dbapi.create_bmc_setting_list(node_id, settings, version)[0]
+
+
+def get_test_bmc_setting(**kw):
+    return {
+        'node_id': kw.get('node_id', '123'),
+        'name': kw.get('name', 'IPMI1_Enable'),
+        'value': kw.get('value', 'Disabled'),
+        'attribute_type': kw.get('attribute_type', 'Enumeration'),
+        'allowable_values': kw.get('allowable_values',
+                                   ['Enabled', 'Disabled']),
+        'lower_bound': kw.get('lower_bound', None),
+        'max_length': kw.get('max_length', None),
+        'min_length': kw.get('max_length', None),
+        'read_only': kw.get('read_only', False),
+        'reset_required': kw.get('reset_required', True),
+        'unique': kw.get('unique', False),
+        'upper_bound': kw.get('upper_bound', None),
+        'version': kw.get('version', bmc.BMCSetting.VERSION),
+        'created_at': kw.get('created_at'),
+        'updated_at': kw.get('updated_at'),
+    }
+
+
+def get_test_bmc_setting_list():
+    return [
+        {'name': 'IPMI1_Enable', 'value': 'Disabled'},
+        {'name': 'SSH_Enable', 'value': 'Enabled'},
+        {'name': 'Telnet_Enable', 'value': 'Disabled'}
     ]
 
 

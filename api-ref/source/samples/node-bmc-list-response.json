@@ -1,0 +1,20 @@
+{
+  "bmc": [
+    {
+      "created_at": "2016-08-18T22:28:49.653974+00:00",
+      "updated_at": "2016-08-18T22:28:49.653974+00:00",
+      "links": [
+        {
+          "href": "http://127.0.0.1:6385/v1/nodes/6d85703a-565d-469a-96ce-30b6de53079d/bmc/IPMI1_Enable",
+          "rel": "self"
+        },
+        {
+          "href": "http://127.0.0.1:6385/v1/nodes/6d85703a-565d-469a-96ce-30b6de53079d/bmc/IPMI1_Enable",
+          "rel": "bookmark"
+        }
+      ],
+      "name": "IPMI1_Enable",
+      "value": "Disabled"
+    }
+  ]
+}

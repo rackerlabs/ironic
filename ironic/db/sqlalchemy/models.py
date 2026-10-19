@@ -413,6 +413,26 @@ class BIOSSetting(Base):
     upper_bound = Column(BigInteger, nullable=True)
 
 
+class BMCSetting(Base):
+    """Represents a BMC (management controller) setting of a node."""
+
+    __tablename__ = 'bmc_settings'
+    __table_args__ = (table_args())
+    node_id = Column(Integer, ForeignKey('nodes.id'),
+                     primary_key=True, nullable=False)
+    name = Column(String(255), primary_key=True, nullable=False)
+    value = Column(Text, nullable=True)
+    attribute_type = Column(String(255), nullable=True)
+    allowable_values = Column(db_types.JsonEncodedList, nullable=True)
+    lower_bound = Column(BigInteger, nullable=True)
+    max_length = Column(Integer, nullable=True)
+    min_length = Column(Integer, nullable=True)
+    read_only = Column(Boolean, nullable=True)
+    reset_required = Column(Boolean, nullable=True)
+    unique = Column(Boolean, nullable=True)
+    upper_bound = Column(BigInteger, nullable=True)
+
+
 class Allocation(Base):
     """Represents an allocation of a node for deployment."""
 

@@ -14,6 +14,8 @@
 #    under the License.
 
 import datetime
+import json
+import os
 from unittest import mock
 
 from oslo_utils import timeutils
@@ -2931,3 +2933,173 @@ class SensorDataTestCase(db_base.DbTestCase):
 
         expected = {'Drive': {}}
         self.assertEqual(result, expected)
+
+
+def _bmc_sample():
+    """Load the sanitized iDRAC DellAttributes sample."""
+    path = os.path.join(os.path.dirname(__file__), '..', 'drac',
+                        'json_samples', 'dell_attributes_idrac.json')
+    with open(os.path.abspath(path)) as fp:
+        return json.load(fp)
+
+
+class FakeBMCAttributes(object):
+    """Stands in for a sushy DellAttributes resource.
+
+    Provides only the interface ``_get_bmc`` promises: ``attributes``,
+    ``get_attribute_registry`` and ``set_attributes``.
+    """
+
+    def __init__(self, attributes, registry=None):
+        self.attributes = attributes
+        self.registry = registry
+        self.set_attributes = mock.Mock()
+
+    def get_attribute_registry(self, language='en'):
+        if self.registry is None:
+            raise sushy.exceptions.MissingAttributeError(
+                attribute='AttributeRegistry', resource='DellAttributes')
+        return self.registry
+
+
+class RedfishManagementBMCTestCase(db_base.DbTestCase):
+
+    def setUp(self):
+        super(RedfishManagementBMCTestCase, self).setUp()
+        self.config(enabled_hardware_types=['redfish'],
+                    enabled_power_interfaces=['redfish'],
+                    enabled_boot_interfaces=['redfish-virtual-media'],
+                    enabled_management_interfaces=['redfish'],
+                    enabled_inspect_interfaces=['redfish'],
+                    enabled_bios_interfaces=['redfish'])
+        self.node = obj_utils.create_test_node(
+            self.context, driver='redfish', driver_info=INFO_DICT)
+        self.attributes = _bmc_sample()['Attributes']
+        self.bmc = FakeBMCAttributes(self.attributes)
+
+    def _cache(self, mock_setting_list):
+        """Cache the sample settings and return what was synced."""
+        mock_setting_list.sync_node_setting.return_value = ([], [], [], [])
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            with mock.patch.object(task.driver.management, '_get_bmc',
+                                   autospec=True, return_value=self.bmc):
+                task.driver.management.cache_bmc_settings(task)
+            return mock_setting_list.sync_node_setting.call_args[0][2]
+
+    def test__get_bmc_unsupported(self):
+        # Redfish defines no standard location for the Manager's own
+        # configuration attributes, so the generic driver has nothing to read.
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.UnsupportedDriverExtension,
+                              task.driver.management._get_bmc, task)
+
+    def test_cache_bmc_settings_unsupported(self):
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.UnsupportedDriverExtension,
+                              task.driver.management.cache_bmc_settings, task)
+
+    @mock.patch.object(redfish_mgmt.objects, 'BMCSettingList', autospec=True)
+    def test_cache_bmc_settings(self, mock_setting_list):
+        settings = self._cache(mock_setting_list)
+
+        cached = {s['name'] for s in settings}
+        by_name = {s['name']: s['value'] for s in settings}
+        # Values arrive from the BMC as strings and integers alike.
+        self.assertEqual(1500, by_name['CurrentNIC.1.MTU'])
+        self.assertEqual('Disabled', by_name['IPMILan.1.Enable'])
+        self.assertEqual('', by_name['SysLog.1.Server1'])
+        # Attributes whose names do not denote credentials are kept, even
+        # where they contain the word "key".
+        self.assertLessEqual({'Security.1.CsrKeySize',
+                              'VirtualMedia.1.KeyEnable',
+                              'SSHCrypto.1.HostKeyAlgorithms',
+                              'NTPConfigGroup.1.NTP1SecurityKeyNumber',
+                              'IPMILan.1.CommunityName',
+                              'SNMP.1.AgentCommunity',
+                              'SNMP.1.EngineID'}, cached)
+
+    @mock.patch.object(redfish_mgmt.objects, 'BMCSettingList', autospec=True)
+    def test_cache_bmc_settings_drops_credentials(self, mock_setting_list):
+        cached = {s['name'] for s in self._cache(mock_setting_list)}
+
+        # An iDRAC returns password hashes with their salts, SNMPv3 localized
+        # keys and IPMI keys in the clear. None of it may be persisted.
+        for name in ('Users.2.SHA256Password', 'Users.2.SHA256PasswordSalt',
+                     'Users.2.SHA1v3Key', 'Users.2.MD5v3Key',
+                     'Users.2.IPMIKey', 'IPMILan.1.EncryptionKey',
+                     'LDAP.1.BindPassword',
+                     'VNCServer.1.Password', 'Users.1.Password',
+                     'NTPConfigGroup.1.NTP1SecurityKey',
+                     'Users.2.SNMPv3AuthenticationPassphrase',
+                     'Users.2.SNMPv3PrivacyPassphrase'):
+            self.assertIn(name, self.attributes)
+            self.assertNotIn(name, cached)
+
+    @mock.patch.object(redfish_mgmt.objects, 'BMCSettingList', autospec=True)
+    def test_cache_bmc_settings_registry(self, mock_setting_list):
+        entry = mock.Mock(spec=['name', 'attribute_type', 'allowable_values',
+                                'read_only', 'reset_required', 'unique',
+                                'lower_bound', 'upper_bound', 'max_length',
+                                'min_length'])
+        entry.name = 'IPMILan.1.Enable'
+        entry.attribute_type = 'Enumeration'
+        # The registry reports enumerations as a list of dicts, not strings,
+        # and an iDRAC names them by a code while reporting the attribute
+        # itself by the display name.
+        entry.allowable_values = [{'ValueName': '0',
+                                   'ValueDisplayName': 'Disabled'},
+                                  {'ValueName': '1',
+                                   'ValueDisplayName': 'Enabled'}]
+        entry.read_only = False
+        entry.reset_required = False
+        entry.unique = False
+        entry.lower_bound = None
+        entry.upper_bound = None
+        entry.max_length = None
+        entry.min_length = None
+        registry = mock.Mock()
+        registry.registry_entries.attributes = [entry]
+        self.bmc.registry = registry
+
+        settings = self._cache(mock_setting_list)
+
+        setting = next(s for s in settings if s['name'] == 'IPMILan.1.Enable')
+        # The cached value must be one of its own allowable values.
+        self.assertEqual('Disabled', setting['value'])
+        self.assertEqual(['Disabled', 'Enabled'], setting['allowable_values'])
+        self.assertEqual('Enumeration', setting['attribute_type'])
+
+    def _apply(self, settings):
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            with mock.patch.object(task.driver.management, '_get_bmc',
+                                   autospec=True, return_value=self.bmc):
+                with mock.patch.object(task.driver.management,
+                                       'cache_bmc_settings', autospec=True):
+                    return task.driver.management.apply_bmc_settings(
+                        task, settings), task
+
+    def test_apply_bmc_settings(self):
+        self._apply([{'name': 'IPMILan.1.Enable', 'value': 'Enabled'},
+                     {'name': 'SSH.1.Port', 'value': '22'}])
+
+        self.bmc.set_attributes.assert_called_once_with(
+            {'IPMILan.1.Enable': 'Enabled', 'SSH.1.Port': '22'})
+
+    def test_apply_bmc_settings_rejects_credentials(self):
+        self.assertRaises(
+            exception.InvalidParameterValue, self._apply,
+            [{'name': 'IPMILan.1.Enable', 'value': 'Enabled'},
+             {'name': 'Users.2.Password', 'value': 'hunter2'}])
+
+        self.bmc.set_attributes.assert_not_called()
+
+    def test_apply_bmc_settings_error(self):
+        self.bmc.set_attributes.side_effect = sushy.exceptions.SushyError()
+
+        self.assertRaises(
+            exception.RedfishError, self._apply,
+            [{'name': 'IPMILan.1.Enable', 'value': 'Enabled'}])

@@ -56,6 +56,12 @@ bios_setting:
   in: path
   required: true
   type: string
+bmc_setting:
+  description: |
+    The name of the BMC setting.
+  in: path
+  required: true
+  type: string
 chassis_ident:
   description: |
     The UUID of the chassis.
@@ -654,6 +660,81 @@ bios_settings:
   in: body
   required: true
   type: array
+bmc_setting_allowable_values:
+  description: |
+    A list of allowable values. May be ``null``.
+  in: body
+  required: true
+  type: array
+bmc_setting_attribute_type:
+  description: |
+    A string describing the type of the BMC setting. May be ``null``.
+  in: body
+  required: true
+  type: string
+bmc_setting_lower_bound:
+  description: |
+    The lowest allowed integer value. May be ``null``.
+  in: body
+  required: true
+  type: integer
+bmc_setting_max_length:
+  description: |
+    The maximum string length of the value. May be ``null``.
+  in: body
+  required: true
+  type: integer
+bmc_setting_min_length:
+  description: |
+    The minimum string length of the value. May be ``null``.
+  in: body
+  required: true
+  type: integer
+bmc_setting_name:
+  description: |
+    The name of a BMC setting for a Node, eg. ``IPMI1_Enable``.
+  in: body
+  required: true
+  type: string
+bmc_setting_read_only:
+  description: |
+    This BMC setting is read only and can't be changed. May be ``null``.
+  in: body
+  required: true
+  type: boolean
+bmc_setting_reset_required:
+  description: |
+    After setting this BMC setting a node reboot is required. May be ``null``.
+  in: body
+  required: true
+  type: boolean
+bmc_setting_unique:
+  description: |
+    This BMC setting is unique to this node. May be ``null``.
+  in: body
+  required: true
+  type: boolean
+bmc_setting_upper_bound:
+  description: |
+    The highest allowed integer value. May be ``null``.
+  in: body
+  required: true
+  type: integer
+bmc_setting_value:
+  description: |
+    The value of a BMC setting for a Node, eg. "Disabled". May be ``null``.
+  in: body
+  required: true
+  type: string
+bmc_settings:
+  description: |
+    Optional list of one or more BMC settings. It includes following fields
+    "created_at", "updated_at", "links", "name", "value", "attribute_type",
+    "allowable_values", "lower_bound", "max_length", "min_length", "read_only",
+    "reset_required", "unique", "upper_bound"
+  in: body
+  required: true
+  type: array
 boot_device:
   description: |
     The boot device for a Node, eg. "pxe" or "disk".
@@ -762,6 +843,13 @@ created_at:
 d_bios_setting:
   description: |
     Dictionary containing the definition of a Bios setting. It includes the
+    following fields "created_at", "updated_at", "links", "name", "value".
+  in: body
+  required: true
+  type: dictionary
+d_bmc_setting:
+  description: |
+    Dictionary containing the definition of a BMC setting. It includes the
     following fields "created_at", "updated_at", "links", "name", "value".
   in: body
   required: true

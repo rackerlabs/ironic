@@ -991,6 +991,19 @@ node_policies = [
         deprecated_rule=deprecated_node_bios_get
     ),
     policy.DocumentedRuleDefault(
+        name='baremetal:node:bmc:get',
+        check_str=SYSTEM_ADMIN_OR_OWNER_ADMIN,
+        scope_types=['system', 'project'],
+        description='Retrieve Node BMC (management controller) settings. '
+                    'Unlike BIOS settings, BMC settings are restricted to '
+                    'the system and the node owner administrator; a lessee '
+                    'or plain reader cannot access them.',
+        operations=[
+            {'path': '/nodes/{node_ident}/bmc', 'method': 'GET'},
+            {'path': '/nodes/{node_ident}/bmc/{setting}', 'method': 'GET'}
+        ],
+    ),
+    policy.DocumentedRuleDefault(
         name='baremetal:node:disable_cleaning',
         check_str=SYSTEM_ADMIN,
         scope_types=['system', 'project'],

@@ -1,0 +1,60 @@
+{
+    "@Redfish.Settings": {
+        "@odata.context": "/redfish/v1/$metadata#Settings.Settings",
+        "@odata.type": "#Settings.v1_3_5.Settings",
+        "SettingsObject": {
+            "@odata.id": "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellAttributes/iDRAC.Embedded.1/Settings"
+        },
+        "SupportedApplyTimes": ["Immediate", "AtMaintenanceWindowStart"]
+    },
+    "@odata.context": "/redfish/v1/$metadata#DellAttributes.DellAttributes",
+    "@odata.id": "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellAttributes/iDRAC.Embedded.1",
+    "@odata.type": "#DellAttributes.v1_0_0.DellAttributes",
+    "AttributeRegistry": "ManagerAttributeRegistry.v1_0_0",
+    "Description": "This schema provides the oem attributes",
+    "Id": "iDRAC.Embedded.1",
+    "Name": "OEMAttributeRegistry",
+    "Attributes": {
+        "CurrentNIC.1.MTU": 1500,
+        "CurrentNIC.1.VLanID": 1,
+        "SSH.1.Port": 22,
+        "SSH.1.Timeout": 1800,
+        "Users.2.Privilege": 511,
+        "WebServer.1.HttpsPort": 443,
+
+        "IPMILan.1.Enable": "Disabled",
+        "IPMILan.1.PrivLimit": "Administrator",
+        "NIC.1.Selection": "Dedicated",
+        "NIC.1.Speed": "1000",
+        "Serial.1.BaudRate": "57600",
+        "SSH.1.Enable": "Enabled",
+        "WebServer.1.TLSProtocol": "TLS 1.2 and Higher",
+        "Users.2.UserName": "root",
+
+        "SysLog.1.Server1": "",
+        "Users.1.UserName": "",
+        "SSH.1.Banner": "",
+
+        "Users.1.Password": null,
+        "Users.2.SNMPv3AuthenticationPassphrase": null,
+        "Users.2.SNMPv3PrivacyPassphrase": null,
+        "LDAP.1.BindPassword": null,
+        "VNCServer.1.Password": null,
+        "NTPConfigGroup.1.NTP1SecurityKey": null,
+
+        "Users.2.SHA256Password": "0000000000000000000000000000000000000000000000000000000000000000",
+        "Users.2.SHA256PasswordSalt": "00000000000000000000000000000000",
+        "Users.2.SHA1v3Key": "0000000000000000000000000000000000000000",
+        "Users.2.MD5v3Key": "00000000000000000000000000000000",
+        "Users.2.IPMIKey": "0000000000000000000000000000000000000000000000000000000000000000",
+        "IPMILan.1.EncryptionKey": "0000000000000000000000000000000000000000",
+        "SNMP.1.AgentCommunity": "public",
+        "IPMILan.1.CommunityName": "public",
+
+        "Security.1.CsrKeySize": "2048",
+        "VirtualMedia.1.KeyEnable": "Disabled",
+        "SSHCrypto.1.HostKeyAlgorithms": "ssh-rsa,rsa-sha2-512,ecdsa-sha2-nistp256,ssh-ed25519",
+        "NTPConfigGroup.1.NTP1SecurityKeyNumber": 1,
+        "SNMP.1.EngineID": "0x80001f880400000000000000"
+    }
+}

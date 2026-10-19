@@ -1320,3 +1320,35 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         filters = mock_manager.iter_nodes.call_args[1]['filters']
         self.assertEqual({states.CLEANWAIT, states.SERVICEWAIT},
                          filters['provision_state_in'])
+
+    @mock.patch.object(drac_mgmt, 'redfish_utils', autospec=True)
+    def test__get_bmc(self, mock_redfish_utils):
+        manager = mock_redfish_utils.get_manager.return_value
+        manager_oem = manager.get_oem_extension.return_value
+        # An iDRAC carries several attribute resources; only the one named
+        # for the iDRAC itself describes the management controller.
+        bmc = mock.Mock()
+        manager_oem.attribute_resources = {
+            'iDRAC.Embedded.1': bmc,
+            'System.Embedded.1': mock.Mock(),
+            'LifecycleController.Embedded.1': mock.Mock(),
+        }
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            result = task.driver.management._get_bmc(task)
+
+        self.assertIs(bmc, result)
+        manager.get_oem_extension.assert_called_once_with('Dell')
+
+    @mock.patch.object(drac_mgmt, 'redfish_utils', autospec=True)
+    def test__get_bmc_missing(self, mock_redfish_utils):
+        manager = mock_redfish_utils.get_manager.return_value
+        manager.get_oem_extension.return_value.attribute_resources = {
+            'System.Embedded.1': mock.Mock(),
+        }
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(sushy.exceptions.MissingAttributeError,
+                              task.driver.management._get_bmc, task)
