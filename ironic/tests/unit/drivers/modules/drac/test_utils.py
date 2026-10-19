@@ -12,9 +12,11 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import json
 from unittest import mock
 
 import sushy
+from sushy import connector
 
 from ironic.common import exception
 from ironic.conductor import task_manager
@@ -202,3 +204,49 @@ class DracUtilsDellAttributesTestCase(test_utils.BaseDracTest):
                 exception.RedfishError,
                 drac_utils.set_dell_attributes,
                 task, {'NTPConfigGroup.1.NTP1': '10.0.0.1'})
+
+    def test_set_dell_attributes_redacts_sushy_logs(
+            self, mock_get_system, mock_get_manager):
+        uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+               'DellAttributes/iDRAC.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': uri}])
+        manager._conn = connector.Connector('https://bmc.example')
+        mock_get_manager.return_value = manager
+        attributes = {'Users.5.SNMPv3AuthenticationPassphrase': 'auth-secret',
+                      'Users.5.SNMPv3PrivacyPassphrase': 'privacy-secret',
+                      'Users.5.Password': 'login-secret'}
+        response = mock.Mock(status_code=200, headers={})
+        with mock.patch.object(manager._conn._session, 'request',
+                               autospec=True,
+                               return_value=response) as request:
+            with mock.patch.object(connector.LOG, 'debug',
+                                   autospec=True) as debug:
+                with task_manager.acquire(self.context, self.node.uuid,
+                                          shared=False) as task:
+                    drac_utils.set_dell_attributes(task, attributes,
+                                                   target='iDRAC')
+        logged = '\n'.join(call.args[0] % call.args[1]
+                           for call in debug.call_args_list)
+        for secret in attributes.values():
+            self.assertNotIn(secret, logged)
+        wire = json.dumps(request.call_args.kwargs['json'])
+        self.assertEqual({'Attributes': attributes}, json.loads(wire))
+
+    def test_set_dell_attributes_redacts_bmc_errors(
+            self, mock_get_system, mock_get_manager):
+        uri = ('/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/'
+               'DellAttributes/iDRAC.Embedded.1')
+        manager = self._fake_manager(links=[{'@odata.id': uri}])
+        manager._conn.patch.side_effect = sushy.exceptions.SushyError(
+            'Rejected password secret-value')
+        mock_get_manager.return_value = manager
+        with mock.patch.object(drac_utils.LOG, 'error',
+                               autospec=True) as error_log:
+            with task_manager.acquire(self.context, self.node.uuid,
+                                      shared=False) as task:
+                error = self.assertRaises(
+                    exception.RedfishError, drac_utils.set_dell_attributes,
+                    task, {'Users.5.Password': 'secret-value'}, target='iDRAC')
+        self.assertNotIn('secret-value', str(error))
+        error_log.assert_called_once()
+        self.assertNotIn('secret-value', error_log.call_args.args[0])
