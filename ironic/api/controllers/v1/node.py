@@ -31,6 +31,7 @@ from ironic import api
 from ironic.api.controllers import link
 from ironic.api.controllers.v1 import allocation
 from ironic.api.controllers.v1 import bios
+from ironic.api.controllers.v1 import bmc
 from ironic.api.controllers.v1 import collection
 from ironic.api.controllers.v1 import firmware
 from ironic.api.controllers.v1 import notification_utils as notify
@@ -2465,6 +2466,7 @@ class NodesController(rest.RestController):
         'volume': volume.VolumeController,
         'traits': NodeTraitsController,
         'bios': bios.NodeBiosController,
+        'bmc': bmc.NodeBmcController,
         'allocation': allocation.NodeAllocationController,
         'history': NodeHistoryController,
         'inventory': NodeInventoryController,
@@ -2494,6 +2496,8 @@ class NodesController(rest.RestController):
                 and not api_utils.allow_vifs_subcontroller())
             or (remainder[0] == 'bios'
                 and not api_utils.allow_bios_interface())
+            or (remainder[0] == 'bmc'
+                and not api_utils.allow_bmc_settings())
             or (remainder[0] == 'allocation'
                 and not api_utils.allow_allocations())
             or (remainder[0] == 'history'

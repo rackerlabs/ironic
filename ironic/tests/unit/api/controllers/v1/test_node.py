@@ -9795,3 +9795,101 @@ class TestNodeVmedia(test_api_base.BaseApiTest):
                           headers={api_base.Version.string: "1.87"},
                           expect_errors=True)
         self.assertEqual(http_client.NOT_FOUND, ret.status_int)
+
+
+class TestBMC(test_api_base.BaseApiTest):
+
+    def setUp(self):
+        super(TestBMC, self).setUp()
+        self.version = "1.116"
+        self.node = obj_utils.create_test_node(
+            self.context, id=1)
+        self.bmc = obj_utils.create_test_bmc_setting(self.context,
+                                                     node_id=self.node.id)
+
+    def test_get_all_bmc(self):
+        ret = self.get_json('/nodes/%s/bmc' % self.node.uuid,
+                            headers={api_base.Version.string: self.version})
+
+        expected_json = [
+            {'created_at': ret['bmc'][0]['created_at'],
+             'updated_at': ret['bmc'][0]['updated_at'],
+             'links': [
+                {'href': 'http://localhost/v1/nodes/%s/bmc/IPMI1_Enable'
+                 % self.node.uuid, 'rel': 'self'},
+                {'href': 'http://localhost/nodes/%s/bmc/IPMI1_Enable'
+                 % self.node.uuid, 'rel': 'bookmark'}],
+             'name': 'IPMI1_Enable', 'value': 'Disabled'}]
+        self.assertEqual({'bmc': expected_json}, ret)
+
+    def test_get_all_bmc_fails_with_bad_version(self):
+        ret = self.get_json('/nodes/%s/bmc' % self.node.uuid,
+                            headers={api_base.Version.string: "1.115"},
+                            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, ret.status_code)
+
+    def test_get_one_bmc(self):
+        ret = self.get_json('/nodes/%s/bmc/IPMI1_Enable' % self.node.uuid,
+                            headers={api_base.Version.string: self.version})
+
+        expected_json = {
+            'IPMI1_Enable': {
+                'allowable_values': ['Enabled', 'Disabled'],
+                'attribute_type': 'Enumeration',
+                'created_at': ret['IPMI1_Enable']['created_at'],
+                'links': [
+                    {'href': 'http://localhost/v1/nodes/%s/bmc/IPMI1_Enable'
+                     % self.node.uuid, u'rel': u'self'},
+                    {'href': 'http://localhost/nodes/%s/bmc/IPMI1_Enable'
+                     % self.node.uuid, u'rel': u'bookmark'}],
+                'lower_bound': None,
+                'min_length': None,
+                'max_length': None,
+                'name': 'IPMI1_Enable',
+                'read_only': False,
+                'reset_required': True,
+                'unique': False,
+                'updated_at': None,
+                'upper_bound': None,
+                'value': 'Disabled'}}
+
+        self.assertEqual(expected_json, ret)
+
+    def test_get_one_bmc_fails_with_bad_version(self):
+        ret = self.get_json('/nodes/%s/bmc/IPMI1_Enable' % self.node.uuid,
+                            headers={api_base.Version.string: "1.115"},
+                            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, ret.status_code)
+
+    def test_get_one_bmc_fails_if_not_found(self):
+        ret = self.get_json('/nodes/%s/bmc/fake_setting' % self.node.uuid,
+                            headers={api_base.Version.string: self.version},
+                            expect_errors=True)
+        self.assertEqual(http_client.NOT_FOUND, ret.status_code)
+        self.assertIn("fake_setting", ret.json['error_message'])
+        self.assertNotIn(self.node.id, ret.json['error_message'])
+
+    def test_get_all_bmc_with_detail(self):
+        ret = self.get_json('/nodes/%s/bmc?detail=True' % self.node.uuid,
+                            headers={api_base.Version.string: self.version})
+
+        expected_json = [
+            {'allowable_values': ['Enabled', 'Disabled'],
+             'attribute_type': 'Enumeration',
+             'created_at': ret['bmc'][0]['created_at'],
+             'links': [
+                 {'href': 'http://localhost/v1/nodes/%s/bmc/IPMI1_Enable'
+                  % self.node.uuid, 'rel': 'self'},
+                 {'href': 'http://localhost/nodes/%s/bmc/IPMI1_Enable'
+                  % self.node.uuid, 'rel': 'bookmark'}],
+             'lower_bound': None,
+             'max_length': None,
+             'min_length': None,
+             'name': 'IPMI1_Enable',
+             'read_only': False,
+             'reset_required': True,
+             'unique': False,
+             'updated_at': None,
+             'upper_bound': None,
+             'value': 'Disabled'}]
+        self.assertEqual({'bmc': expected_json}, ret)

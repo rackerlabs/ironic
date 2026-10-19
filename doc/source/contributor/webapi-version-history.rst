@@ -2,6 +2,26 @@
 REST API Version History
 ========================
 
+1.116 (Indri)
+----------------
+
+Add the BMC settings resource, exposing the configuration attributes of a
+node's BMC (management controller) separately from its BIOS settings:
+
+* ``GET /v1/nodes/{node_ident}/bmc`` lists the cached BMC settings.
+* ``GET /v1/nodes/{node_ident}/bmc/{setting_name}`` returns a single setting.
+
+Unlike BIOS settings, BMC settings are restricted by default to the system
+and the node's owner administrator (``baremetal:node:bmc:get`` defaults to
+``SYSTEM_ADMIN_OR_OWNER_ADMIN``); a lessee or plain reader cannot access
+them. Settings holding credential material are never cached, so they are
+never returned. The ``detail`` and ``fields`` query parameters are supported,
+mirroring the BIOS resource.
+
+Redfish has no standard location for a Manager's own configuration
+attributes, so the settings are only populated for hardware types whose
+management interface knows where the vendor keeps them, such as ``idrac``.
+
 1.112 (Hibiscus)
 ----------------------
 

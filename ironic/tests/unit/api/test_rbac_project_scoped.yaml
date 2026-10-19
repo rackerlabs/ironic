@@ -3545,6 +3545,44 @@ service_cannot_get_bios_setttings:
   headers: *service_headers
   assert_status: 404
 
+# Node BMC settings - stricter than BIOS: only system/owner admin.
+
+owner_admin_can_get_bmc_settings:
+  path: '/v1/nodes/{owner_node_ident}/bmc'
+  method: get
+  headers: *owner_admin_headers
+  assert_status: 200
+
+owner_manager_can_get_bmc_settings:
+  path: '/v1/nodes/{owner_node_ident}/bmc'
+  method: get
+  headers: *owner_manager_headers
+  assert_status: 200
+
+owner_reader_cannot_get_bmc_settings:
+  path: '/v1/nodes/{owner_node_ident}/bmc'
+  method: get
+  headers: *owner_reader_headers
+  assert_status: 403
+
+lessee_admin_cannot_get_bmc_settings:
+  path: '/v1/nodes/{lessee_node_ident}/bmc'
+  method: get
+  headers: *lessee_admin_headers
+  assert_status: 403
+
+third_party_admin_cannot_get_bmc_settings:
+  path: '/v1/nodes/{owner_node_ident}/bmc'
+  method: get
+  headers: *third_party_admin_headers
+  assert_status: 404
+
+service_can_get_bmc_settings_owner_project:
+  path: '/v1/nodes/{owner_node_ident}/bmc'
+  method: get
+  headers: *service_headers_owner_project
+  assert_status: 200
+
 # Conductors - https://docs.openstack.org/api-ref/baremetal/#allocations-allocations
 
 # This is a system scoped endpoint, everything should fail in this section.

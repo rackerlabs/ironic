@@ -26,6 +26,7 @@ def register_all():
     # need to receive it via RPC.
     __import__('ironic.objects.allocation')
     __import__('ironic.objects.bios')
+    __import__('ironic.objects.bmc')
     __import__('ironic.objects.chassis')
     __import__('ironic.objects.conductor')
     __import__('ironic.objects.deploy_template')

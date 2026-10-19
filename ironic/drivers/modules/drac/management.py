@@ -46,6 +46,10 @@ from ironic.drivers.modules.redfish import utils as redfish_utils
 
 LOG = logging.getLogger(__name__)
 
+# Identity of the DellAttributes resource holding the iDRAC's own settings,
+# as opposed to those of the host or the Lifecycle Controller.
+IDRAC_ATTRIBUTES_ID = 'iDRAC.Embedded.1'
+
 METRICS = metrics_utils.get_metrics_logger(__name__)
 
 # This dictionary is used to map boot device names between two (2) name
@@ -997,3 +1001,30 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                          {'index': provider_index, 'node': node.uuid,
                           'error': error})
             self._set_failed(task, error_msg, error_msg)
+
+    def _get_bmc(self, task):
+        """Return the iDRAC BMC settings resource.
+
+        Dell exposes attributes through the Dell OEM ``DellAttributes``
+        resources rather than on the Manager itself, and an iDRAC carries
+        several of them - typically ``iDRAC.Embedded.1``,
+        ``System.Embedded.1`` and ``LifecycleController.Embedded.1``. Only
+        the first describes the management controller, so select it by
+        identity.
+
+        :param task: a TaskManager instance containing the node to act on.
+        :returns: a sushy resource exposing ``attributes``,
+            ``get_attribute_registry`` and ``set_attributes``.
+        :raises: sushy.exceptions.MissingAttributeError if the iDRAC does not
+            expose BMC attributes.
+        """
+        system = redfish_utils.get_system(task.node)
+        manager = redfish_utils.get_manager(task.node, system)
+        manager_oem = manager.get_oem_extension('Dell')
+        bmc = manager_oem.attribute_resources.get(IDRAC_ATTRIBUTES_ID)
+        if bmc is None:
+            raise sushy.exceptions.MissingAttributeError(
+                attribute='Links/Oem/Dell/DellAttributes/%s'
+                          % IDRAC_ATTRIBUTES_ID,
+                resource=manager.path)
+        return bmc

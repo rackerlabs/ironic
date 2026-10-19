@@ -712,6 +712,8 @@ expected_object_fingerprints = {
     'TraitList': '1.2-120fedaa212ddbcf9f6148a64c550946',
     'BIOSSetting': '1.2-a0c2924d8ffef7ed872e48435a569a83',
     'BIOSSettingList': '1.1-6e606655643a9a5fa116ce771cbebe59',
+    'BMCSetting': '1.0-a0c2924d8ffef7ed872e48435a569a83',
+    'BMCSettingList': '1.0-6e606655643a9a5fa116ce771cbebe59',
     'Allocation': '1.3-91102bce67725a4ee924c6b2f213bcde',
     'AllocationCRUDNotification': '1.0-59acc533c11d306f149846f922739c15',
     'AllocationCRUDPayload': '1.1-3c8849932b80380bb96587ff62e8f087',

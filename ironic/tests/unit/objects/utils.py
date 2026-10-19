@@ -255,6 +255,30 @@ def create_test_bios_setting(ctxt, **kw):
     return bios_setting
 
 
+def get_test_bmc_setting(ctxt, **kw):
+    """Return a BMCSetting object with appropriate attributes.
+
+    NOTE: The object leaves the attributes marked as changed, such
+    that a create() could be used to commit it to the DB.
+    """
+    db_bmc_setting = db_utils.get_test_bmc_setting(**kw)
+    bmc_setting = objects.BMCSetting(ctxt)
+    for key in db_bmc_setting:
+        setattr(bmc_setting, key, db_bmc_setting[key])
+    return bmc_setting
+
+
+def create_test_bmc_setting(ctxt, **kw):
+    """Create and return a test bmc setting object.
+
+    Create a BMC setting in the DB and return a BMCSetting object with
+    appropriate attributes.
+    """
+    bmc_setting = get_test_bmc_setting(ctxt, **kw)
+    bmc_setting.create()
+    return bmc_setting
+
+
 def create_test_conductor(ctxt, **kw):
     """Register and return a test conductor object."""
     args = db_utils.get_test_conductor(**kw)

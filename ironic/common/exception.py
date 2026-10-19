@@ -771,6 +771,18 @@ class BIOSSettingListNotFound(NotFound):
     _msg_fmt = _("Node %(node)s doesn't have BIOS settings '%(names)s'")
 
 
+class BMCSettingAlreadyExists(Conflict):
+    _msg_fmt = _('A BMC setting %(name)s for node %(node)s already exists.')
+
+
+class BMCSettingNotFound(NotFound):
+    _msg_fmt = _("Node %(node)s doesn't have a BMC setting '%(name)s'")
+
+
+class BMCSettingListNotFound(NotFound):
+    _msg_fmt = _("Node %(node)s doesn't have BMC settings '%(names)s'")
+
+
 class DatabaseVersionTooOld(IronicException):
     _msg_fmt = _("Database version is too old")
 

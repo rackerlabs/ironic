@@ -1200,6 +1200,93 @@ class Connection(object, metaclass=abc.ABCMeta):
         """
 
     @abc.abstractmethod
+    def create_bmc_setting_list(self, node_id, settings, version):
+        """Create a list of BMCSetting records for a given node.
+
+        :param node_id: The node id.
+        :param settings: A list of BMC Settings to be created.
+
+                       ::
+
+                        [
+                          {
+                           'name': String,
+                           'value': String,
+                           additional settings from BMC registry
+                          },
+                          {
+                           'name': String,
+                           'value': String,
+                           additional settings from BMC registry
+                          },
+                          ...
+                        ]
+        :param version: the version of the object.BMCSetting.
+        :returns: A list of BMCSetting object.
+        :raises: NodeNotFound if the node is not found.
+        :raises: BMCSettingAlreadyExists if any of the setting records
+            already exists.
+        """
+
+    @abc.abstractmethod
+    def update_bmc_setting_list(self, node_id, settings, version):
+        """Update a list of BMCSetting records.
+
+        :param node_id: The node id.
+        :param settings: A list of BMC Settings to be updated.
+
+                       ::
+
+                        [
+                          {
+                           'name': String,
+                           'value': String,
+                           additional settings from BMC registry
+                          },
+                          {
+                           'name': String,
+                           'value': String,
+                           additional settings from BMC registry
+                          },
+                          ...
+                        ]
+        :param version: the version of the object.BMCSetting.
+        :returns: A list of BMCSetting objects.
+        :raises: NodeNotFound if the node is not found.
+        :raises: BMCSettingNotFound if any of the settings is not found.
+        """
+
+    @abc.abstractmethod
+    def delete_bmc_setting_list(self, node_id, names):
+        """Delete a list of BMC settings.
+
+        :param node_id: The node id.
+        :param names: List of BMC setting names to be deleted.
+        :raises: NodeNotFound if the node is not found.
+        :raises: BMCSettingNotFound if any of BMC setting name is not found.
+        """
+
+    @abc.abstractmethod
+    def get_bmc_setting(self, node_id, name):
+        """Retrieve BMC setting value.
+
+        :param node_id: The node id.
+        :param name: String containing name of BMC setting to be retrieved.
+        :returns: The BMCSetting object.
+        :raises: NodeNotFound if the node is not found.
+        :raises: BMCSettingNotFound if the BMC setting is not found.
+        """
+
+    @abc.abstractmethod
+    def get_bmc_setting_list(self, node_id):
+        """Retrieve BMC settings of a given node.
+
+        :param node_id: The node id.
+        :returns: A list of BMCSetting objects.
+        :raises: NodeNotFound if the node is not found.
+        """
+
+    @abc.abstractmethod
     def get_allocation_by_id(self, allocation_id):
         """Return an allocation representation.
 
