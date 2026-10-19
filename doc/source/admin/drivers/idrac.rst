@@ -492,6 +492,70 @@ that configures OIDC must run the steps in this order:
    that an attribute is unknown, supply the correct name for your firmware
    through ``extra_attributes``.
 
+SNMPv3 monitoring user
+----------------------
+
+The ``idrac-redfish`` management interface provides the out-of-band clean
+and service step ``configure_snmpv3_user`` for configuring a local iDRAC
+SNMPv3 monitoring account. Its priority is zero, so it runs only when
+explicitly requested in cleaning, servicing, or a runbook. It requires no
+ramdisk.
+
+Configure a dedicated, high-entropy ``[drac]snmpv3_master_key`` of at least
+32 characters through a protected conductor configuration file. The option
+is marked secret. Keep the master separate from the BMC root-password master
+and preserve it across conductor restarts. Restart conductors after changing
+the configuration.
+
+The step uses :ref:`snmpv3-credential-derivation` to derive separate
+authentication and privacy passphrases for each node. The step reads the
+Dell service tag from ``inventory.system_vendor.serial_number`` in stored
+inspection data. Dell inspection populates this field from Redfish SKU.
+Inspection must have completed before running this step. The service tag
+must be seven alphanumeric characters, even when a username is supplied.
+Invalid service tags and master keys are rejected before any BMC writes.
+
+The username defaults to ``<prefix>-<lowercase service tag>``, where the
+prefix comes from ``[drac]snmpv3_username_prefix`` (default ``uc``), giving
+``uc-<lowercase service tag>`` out of the box. The prefix must be 1 to 16
+lowercase ASCII letters or digits and affects only the username, not the
+passphrase derivation. The optional ``[drac]snmpv3_username`` setting overrides
+the derived username, and a step ``username`` argument takes precedence over
+that setting. Username overrides do not affect the passphrase derivation.
+Monitoring provisioning must use the same effective username and the shared
+helper's passphrases.
+
+The default user slot is 3, authentication protocol is SHA, and privacy
+protocol is AES. Valid slots are 3 to 16; slots 1 and 2 are rejected because
+slot 2 holds the factory root administrator account on iDRAC9. Choose a
+dedicated monitoring slot that is not used by another account. For example,
+the following step configures slot 5:
+
+.. code-block:: json
+
+   {
+     "interface": "management",
+     "step": "configure_snmpv3_user",
+     "args": {"slot": 5}
+   }
+
+The step sets the username and a random local login password, then configures
+Login privilege only, disables IPMI and SOL access, sets the SNMPv3 protocols
+and passphrases, and enables separate SNMPv3 passphrase use. The login
+password is distinct from both SNMPv3 passphrases and is randomized on every
+execution. Monitoring uses the derived SNMPv3 passphrases, which remain
+stable for the same master and service tag.
+
+Passphrases and the master are never accepted as step arguments or written
+to Ironic node state. ``extra_attributes`` cannot override ``Users.*`` account
+attributes. Dell attribute strings are redacted in request debug logs, and
+BMC error bodies are omitted because they can echo submitted secrets.
+
+Provision the matching credentials in the monitoring system using the shared
+helper or lookup command described in :ref:`snmpv3-credential-derivation`.
+The step configures the BMC only. Coordinate master rotation, master recovery,
+or service-tag corrections with credential updates in the monitoring system.
+
 RAID Interface
 ==============
 

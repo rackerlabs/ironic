@@ -165,6 +165,18 @@ def get_dell_attributes(task, target='System'):
     return data.get('Attributes', data)
 
 
+class _RedactedAttribute(str):
+    """Keep the wire value while hiding it in Sushy's payload debug log.
+
+    Sushy sanitizes only exact Password keys, not Dell's dotted attribute
+    names. Its logger formats the payload dictionary using repr, whereas
+    requests JSON-encodes the underlying string value.
+    """
+
+    def __repr__(self):
+        return "'<redacted>'"
+
+
 def set_dell_attributes(task, attributes, target='System'):
     """Apply a set of Dell OEM attributes to a node's iDRAC.
 
@@ -189,14 +201,18 @@ def set_dell_attributes(task, attributes, target='System'):
               '%(uri)s', {'attrs': sorted(attributes),
                           'node': task.node.uuid, 'uri': uri})
     try:
-        manager._conn.patch(uri, data={'Attributes': attributes})
+        payload = {key: _RedactedAttribute(value)
+                   if isinstance(value, str) else value
+                   for key, value in attributes.items()}
+        manager._conn.patch(uri, data={'Attributes': payload})
     except sushy.exceptions.SushyError as e:
         error_msg = (_('Failed to apply Dell attributes %(attrs)s to node '
                        '%(node)s at %(uri)s. Error: %(error)s') %
                      {'attrs': sorted(attributes), 'node': task.node.uuid,
-                      'uri': uri, 'error': e})
+                      'uri': uri, 'error': type(e).__name__})
+        # BMC errors can echo rejected secret values; omit their body.
         LOG.error(error_msg)
-        raise exception.RedfishError(error=error_msg)
+        raise exception.RedfishError(error=error_msg) from None
 
     LOG.info('Applied Dell attributes %(attrs)s to node %(node)s',
              {'attrs': sorted(attributes), 'node': task.node.uuid})

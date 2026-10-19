@@ -66,6 +66,33 @@ opts = [
                       'time the step runs, so it can be changed without '
                       'restarting the conductor. If unset, no certificate '
                       'is sent to the iDRAC.')),
+    cfg.StrOpt('snmpv3_username',
+               help=_('Default iDRAC local username for the SNMPv3 account '
+                      'created by the idrac-redfish configure_snmpv3_user '
+                      'clean and service step when username is omitted. '
+                      'If unset and username is omitted, the step derives a '
+                      'name of the form "<prefix>-<lowercase service tag>" '
+                      '(see snmpv3_username_prefix) using the Dell service '
+                      'tag read from the inspection inventory serial '
+                      'number.')),
+    cfg.StrOpt('snmpv3_username_prefix',
+               default='uc',
+               help=_('Username prefix for the SNMPv3 account derived by the '
+                      'idrac-redfish configure_snmpv3_user step when neither '
+                      'a username argument nor snmpv3_username is set. The '
+                      'derived username is "<prefix>-<lowercase service '
+                      'tag>". Must be 1 to 16 lowercase ASCII letters or '
+                      'digits. The prefix affects only the username, not the '
+                      'derived SNMPv3 passphrases.')),
+    cfg.StrOpt('snmpv3_master_key',
+               secret=True,
+               help=_('Dedicated SNMPv3 master secret of at least '
+                      '32 characters. '
+                      'The configure_snmpv3_user step derives unique '
+                      'authentication and privacy passphrases from this key '
+                      'and the Dell service tag. Do not reuse the BMC root '
+                      'password master. Required; keep stable across restarts '
+                      'and coordinate rotation with all BMCs and consumers.')),
     cfg.IntOpt('bios_factory_reset_timeout',
                default=600,
                min=1,
