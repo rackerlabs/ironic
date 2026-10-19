@@ -21,6 +21,7 @@ DRAC management interface
 """
 
 import json
+import secrets
 import time
 
 import jsonschema
@@ -33,6 +34,7 @@ from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.common import metrics_utils
 from ironic.common import molds
+from ironic.common import snmpv3
 from ironic.common import states
 from ironic.conductor import periodics
 from ironic.conductor import utils as manager_utils
@@ -40,6 +42,7 @@ from ironic.conf import CONF
 from ironic.drivers import base
 from ironic.drivers.modules import deploy_utils
 from ironic.drivers.modules.drac import utils as drac_utils
+from ironic.drivers.modules import inspect_utils
 from ironic.drivers.modules.redfish import management as redfish_management
 from ironic.drivers.modules.redfish import utils as redfish_utils
 
@@ -113,6 +116,15 @@ _MAX_OIDC_PROVIDERS = 16
 # driver_internal_info key holding the state of an in-progress OIDC
 # registration that the periodic task polls.
 _OIDC_REGISTRATION_INFO = 'oidc_registration'
+
+# iDRAC9 holds the factory root administrator account in slot 2, so this step
+# must never program slots 1 or 2. Usable monitoring slots are 3-16.
+_MIN_IDRAC_USER_SLOT = 3
+_MAX_IDRAC_USER_SLOT = 16
+
+# Valid SNMPv3 protocol choices as presented by the iDRAC DellAttributes API.
+_SNMPV3_AUTH_PROTOCOLS = ('SHA', 'MD5', 'None', 'SHA-384', 'SHA-512')
+_SNMPV3_PRIVACY_PROTOCOLS = ('AES', 'DES', 'None', 'AES-256')
 
 _SET_NTP_ARGSINFO = {
     'ntp_servers': {
@@ -217,9 +229,89 @@ _SET_OIDC_ARGSINFO = {
 }
 
 
+_CONFIGURE_SNMPV3_USER_ARGSINFO = {
+    'username': {
+        'description': (
+            'Username for the iDRAC local account. If omitted, '
+            '[drac]snmpv3_username is used; if that is also unset, the '
+            'step derives a name of the form "<prefix>-<lowercase service '
+            'tag>" (prefix from [drac]snmpv3_username_prefix, default uc), '
+            'using the Dell service tag read from the inspection inventory '
+            'serial number.'),
+        'required': False,
+    },
+    'slot': {
+        'description': (
+            'iDRAC local user slot to program (%(min)d-%(max)d). Slots 1 '
+            'and 2 are reserved (slot 2 holds the factory root account on '
+            'iDRAC9). Default 3.'
+            % {'min': _MIN_IDRAC_USER_SLOT, 'max': _MAX_IDRAC_USER_SLOT}),
+        'required': False,
+    },
+    'auth_protocol': {
+        'description': (
+            'SNMPv3 authentication protocol. One of: %(choices)s. '
+            'Default "SHA".'
+            % {'choices': ', '.join(_SNMPV3_AUTH_PROTOCOLS)}),
+        'required': False,
+    },
+    'privacy_protocol': {
+        'description': (
+            'SNMPv3 privacy (encryption) protocol. One of: %(choices)s. '
+            'Default "AES".'
+            % {'choices': ', '.join(_SNMPV3_PRIVACY_PROTOCOLS)}),
+        'required': False,
+    },
+    'extra_attributes': {
+        'description': (
+            'Optional dict of raw Dell OEM attribute name/value pairs '
+            'merged into the PATCH. Users.* attributes are prohibited; '
+            'account settings and secrets are managed by this step.'),
+        'required': False,
+    },
+}
+
+
 def _bool_to_idrac(value):
     """Map a Python boolean to the iDRAC 'Enabled'/'Disabled' string."""
     return 'Enabled' if value else 'Disabled'
+
+
+# Character classes for the throwaway iDRAC login password. The special set is
+# restricted to characters iDRAC accepts in local passwords.
+_PASSWORD_UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+_PASSWORD_LOWER = 'abcdefghijklmnopqrstuvwxyz'
+_PASSWORD_DIGITS = '0123456789'
+_PASSWORD_SPECIAL = '!@#$%^&*()-_=+'
+_PASSWORD_ALPHABET = (_PASSWORD_UPPER + _PASSWORD_LOWER
+                      + _PASSWORD_DIGITS + _PASSWORD_SPECIAL)
+# iDRAC enforces complexity; 24 characters comfortably exceeds the minimum
+# while staying well under the maximum length.
+_PASSWORD_LENGTH = 24
+
+
+def _generate_login_password():
+    """Return a throwaway iDRAC local login password.
+
+    The password is generated with the ``secrets`` CSPRNG and is guaranteed to
+    contain at least one uppercase letter, one lowercase letter, one digit and
+    one allowed special character so that it satisfies strict iDRAC complexity
+    policies. It is used only to create the local slot and is never logged or
+    reused; SNMP polling uses the derived passphrases instead.
+    """
+    chars = [
+        secrets.choice(_PASSWORD_UPPER),
+        secrets.choice(_PASSWORD_LOWER),
+        secrets.choice(_PASSWORD_DIGITS),
+        secrets.choice(_PASSWORD_SPECIAL),
+    ]
+    chars += [secrets.choice(_PASSWORD_ALPHABET)
+              for _unused in range(_PASSWORD_LENGTH - len(chars))]
+    # Shuffle with the CSPRNG so the guaranteed classes are not positional.
+    for i in range(len(chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        chars[i], chars[j] = chars[j], chars[i]
+    return ''.join(chars)
 
 
 def _validate_server_list(name, values, maximum, required):
@@ -997,3 +1089,156 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                          {'index': provider_index, 'node': node.uuid,
                           'error': error})
             self._set_failed(task, error_msg, error_msg)
+
+    # Runbooks and node step state store step arguments.  Production
+    # runbooks should omit username and rely on [drac]snmpv3_username or
+    # the service-tag derivation; passphrases are never accepted as step
+    # arguments and are derived from the dedicated secret master key.
+    @METRICS.timer('DracRedfishManagement.configure_snmpv3_user')
+    @base.clean_step(priority=0, abortable=False,
+                     argsinfo=_CONFIGURE_SNMPV3_USER_ARGSINFO,
+                     requires_ramdisk=False)
+    @base.service_step(priority=0, abortable=False,
+                       argsinfo=_CONFIGURE_SNMPV3_USER_ARGSINFO,
+                       requires_ramdisk=False)
+    def configure_snmpv3_user(self, task, username=None, slot=3,
+                              auth_protocol='SHA', privacy_protocol='AES',
+                              extra_attributes=None):
+        """Configure an SNMPv3 credential on the iDRAC for SNMP polling.
+
+        This is an out-of-band clean and service step, invocable from a
+        runbook, that PATCHes the Dell OEM iDRAC attributes to provision a
+        local user slot whose sole purpose is SNMPv3 polling by an external
+        monitoring system (e.g. ScienceLogic SL1).
+
+        This step is NOT for iDRAC management access. Interactive and API
+        access to the iDRAC should use the SSO account configured by
+        ``set_oidc_config``. SNMP operates at the protocol level before any
+        HTTP layer and has no concept of tokens or SSO, so it requires its
+        own local credential regardless of whether OIDC is configured.
+
+        The account has Login privilege only and no IPMI LAN or Serial
+        access. Its local login password is randomly generated on each run;
+        monitoring uses the separate SNMPv3 passphrases.
+
+        Passphrases are derived from [drac]snmpv3_master_key and the node's
+        Dell service tag using the versioned ironic.common.snmpv3 helper. The
+        service tag is read from the inspection inventory serial number
+        (``inventory.system_vendor.serial_number``); it is the single source
+        of the service tag. Secrets never enter step arguments or node state.
+        A valid service tag is required even if an explicit username is
+        supplied.
+
+        :param task: a TaskManager instance containing the node to act on.
+        :param username: iDRAC local account username. If omitted,
+            [drac]snmpv3_username is used; if that is also unset, the name is
+            derived from the node's Dell service tag as
+            ``"<prefix>-<lowercase service tag>"`` where the prefix comes from
+            [drac]snmpv3_username_prefix (default ``"uc"``).
+        :param slot: iDRAC user slot to program (3-16). Slots 1 and 2 are
+            reserved (slot 2 holds the factory root account on iDRAC9).
+            Default 3.
+        :param auth_protocol: SNMPv3 authentication protocol
+            (SHA, MD5, None, SHA-384, SHA-512). Default ``"SHA"``.
+        :param privacy_protocol: SNMPv3 privacy protocol
+            (AES, DES, None, AES-256). Default ``"AES"``.
+        :param extra_attributes: optional dict of raw Dell OEM attribute
+            name/value pairs merged into the PATCH. Users.* keys are rejected.
+        :raises: InvalidParameterValue on invalid arguments or missing
+            master key or service tag.
+        :raises: RedfishError on an error talking to the BMC.
+        """
+        # --- validate slot ---
+        if (not isinstance(slot, int)
+                or isinstance(slot, bool)
+                or not _MIN_IDRAC_USER_SLOT <= slot <= _MAX_IDRAC_USER_SLOT):
+            raise exception.InvalidParameterValue(
+                _('slot must be an integer from %(min)d to %(max)d')
+                % {'min': _MIN_IDRAC_USER_SLOT, 'max': _MAX_IDRAC_USER_SLOT})
+
+        # --- validate protocol choices ---
+        if auth_protocol not in _SNMPV3_AUTH_PROTOCOLS:
+            raise exception.InvalidParameterValue(
+                _('auth_protocol must be one of: %(choices)s')
+                % {'choices': ', '.join(_SNMPV3_AUTH_PROTOCOLS)})
+        if privacy_protocol not in _SNMPV3_PRIVACY_PROTOCOLS:
+            raise exception.InvalidParameterValue(
+                _('privacy_protocol must be one of: %(choices)s')
+                % {'choices': ', '.join(_SNMPV3_PRIVACY_PROTOCOLS)})
+
+        if auth_protocol == 'None' and privacy_protocol != 'None':
+            raise exception.InvalidParameterValue(
+                _('SNMPv3 privacy requires an authentication protocol'))
+
+        # Dell inspection records the service tag as the inventory serial.
+        # A present-but-partial inventory must surface as a clean
+        # InvalidParameterValue rather than a raw KeyError/TypeError.
+        inspection = inspect_utils.get_inspection_data(task.node, task.context)
+        inventory = inspection.get('inventory') or {}
+        system_vendor = inventory.get('system_vendor') or {}
+        service_tag = system_vendor.get('serial_number')
+        if not service_tag:
+            raise exception.InvalidParameterValue(
+                _('Inspection inventory for the node does not contain a Dell '
+                  'service tag (system_vendor.serial_number); run inspection '
+                  'before this step'))
+        try:
+            credentials = snmpv3.derive_credentials(
+                CONF.drac.snmpv3_master_key, service_tag,
+                prefix=CONF.drac.snmpv3_username_prefix)
+        except ValueError as exc:
+            raise exception.InvalidParameterValue(str(exc)) from None
+
+        if username is None:
+            username = CONF.drac.snmpv3_username
+        username = username or credentials['username']
+        auth_passphrase = credentials['auth_passphrase']
+        privacy_passphrase = credentials['privacy_passphrase']
+
+        prefix = 'Users.%d.' % slot
+        attributes = {
+            prefix + 'Enable': 'Enabled',
+            # Bit 0 grants Login only, not administrative privileges.
+            prefix + 'Privilege': 1,
+            prefix + 'IpmiLanPrivilege': 'No Access',
+            prefix + 'IpmiSerialPrivilege': 'No Access',
+            prefix + 'SolEnable': 'Disabled',
+            prefix + 'ProtocolEnable': 'Enabled',
+            prefix + 'AuthenticationProtocol': auth_protocol,
+            prefix + 'PrivacyProtocol': privacy_protocol,
+            prefix + 'SNMPv3AuthenticationPassphrase': auth_passphrase,
+            prefix + 'SNMPv3PrivacyPassphrase': privacy_passphrase,
+        }
+        # Do not allow secrets or account settings to enter persisted step
+        # arguments through extra_attributes or bypass the activation order.
+        if extra_attributes:
+            if not isinstance(extra_attributes, dict):
+                raise exception.InvalidParameterValue(
+                    _('extra_attributes must be a dictionary'))
+            if any(key.startswith('Users.') for key in extra_attributes):
+                raise exception.InvalidParameterValue(
+                    _('User attributes cannot be supplied in '
+                      'extra_attributes'))
+        _merge_extra_attributes(attributes, extra_attributes)
+
+        LOG.debug('Configuring SNMPv3 user slot %(slot)d (%(username)s) '
+                  'for node %(node)s',
+                  {'slot': slot, 'username': username,
+                   'node': task.node.uuid})
+
+        # UserName and Password must exist before dependent account
+        # attributes can be changed, including when provisioning an empty slot.
+        drac_utils.set_dell_attributes(task, {
+            prefix + 'UserName': username,
+            prefix + 'Password': _generate_login_password(),
+        }, target='iDRAC')
+        drac_utils.set_dell_attributes(task, attributes, target='iDRAC')
+        # Enable separate passphrases only after both have been configured.
+        drac_utils.set_dell_attributes(task, {
+            prefix + 'EnableSNMPv3Passphrase': 'Enabled',
+        }, target='iDRAC')
+
+        LOG.info('Configured SNMPv3 user slot %(slot)d (%(username)s) '
+                 'for node %(node)s',
+                 {'slot': slot, 'username': username,
+                  'node': task.node.uuid})

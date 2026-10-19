@@ -30,6 +30,7 @@ import sushy
 import ironic.common.boot_devices
 from ironic.common import exception
 from ironic.common import molds
+from ironic.common import snmpv3
 from ironic.common import states
 from ironic.conductor import periodics
 from ironic.conductor import task_manager
@@ -1320,3 +1321,338 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         filters = mock_manager.iter_nodes.call_args[1]['filters']
         self.assertEqual({states.CLEANWAIT, states.SERVICEWAIT},
                          filters['provision_state_in'])
+
+    # configure_snmpv3_user tests
+
+    def _snmpv3_conf(self, master='test-master-key-0123456789abcdefgh',
+                     username=None, service_tag='ABC1234'):
+        self.config(snmpv3_master_key=master, group='drac')
+        self.config(snmpv3_username=username, group='drac')
+        self.config(data_backend='database', group='inventory')
+        if service_tag is not None:
+            self.snmpv3_inventory = obj_utils.create_test_inventory(
+                self.context, self.node,
+                inventory_data={
+                    'system_vendor': {'serial_number': service_tag}},
+                plugin_data={})
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_default_slot(self, mock_set_attrs):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task)
+        self.assertEqual(3, mock_set_attrs.call_count)
+        attrs = mock_set_attrs.call_args_list[1][0][1]
+        self.assertEqual('sl1-monitor',
+                         mock_set_attrs.call_args_list[0][0][1][
+                             'Users.3.UserName'])
+        self.assertEqual(24, len(mock_set_attrs.call_args_list[0][0][1][
+            'Users.3.Password']))
+        self.assertEqual({'Users.3.EnableSNMPv3Passphrase': 'Enabled'},
+                         mock_set_attrs.call_args_list[2][0][1])
+        self.assertEqual('Enabled',   attrs['Users.3.Enable'])
+        self.assertEqual(1,           attrs['Users.3.Privilege'])
+        self.assertEqual('No Access', attrs['Users.3.IpmiLanPrivilege'])
+        self.assertEqual('No Access', attrs['Users.3.IpmiSerialPrivilege'])
+        self.assertEqual('Disabled',  attrs['Users.3.SolEnable'])
+        self.assertEqual('Enabled',   attrs['Users.3.ProtocolEnable'])
+        self.assertEqual('SHA',       attrs['Users.3.AuthenticationProtocol'])
+        self.assertEqual('AES',    attrs['Users.3.PrivacyProtocol'])
+        self.assertIn('Users.3.SNMPv3AuthenticationPassphrase', attrs)
+        self.assertIn('Users.3.SNMPv3PrivacyPassphrase', attrs)
+        self.assertEqual('iDRAC', mock_set_attrs.call_args[1]['target'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_explicit_slot_and_protocols(
+            self, mock_set_attrs):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(
+                task, slot=4, auth_protocol='SHA-384', privacy_protocol='AES')
+        attrs = mock_set_attrs.call_args_list[1][0][1]
+        self.assertIn('Users.4.Enable', attrs)
+        self.assertEqual('SHA-384', attrs['Users.4.AuthenticationProtocol'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_username_from_service_tag(
+            self, mock_set_attrs):
+        self._snmpv3_conf()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task)
+        self.assertEqual('uc-abc1234',
+                         mock_set_attrs.call_args_list[0][0][1][
+                             'Users.3.UserName'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_username_arg_overrides_conf(
+            self, mock_set_attrs):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task, username='override')
+        self.assertEqual('override',
+                         mock_set_attrs.call_args_list[0][0][1][
+                             'Users.3.UserName'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_extra_attributes(self, mock_set_attrs):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(
+                task, extra_attributes={'SNMP.1.AgentCommunity': 'example'})
+        self.assertIn('SNMP.1.AgentCommunity',
+                      mock_set_attrs.call_args_list[1][0][1])
+
+    def test_configure_snmpv3_user_bad_slot_too_low(self):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, slot=1)
+
+    def test_configure_snmpv3_user_bad_slot_too_high(self):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, slot=17)
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_slot_2_rejected(self, mock_set):
+        # Slot 2 holds the factory root account on iDRAC9 and must never be
+        # programmed by this step.
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, slot=2)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_slot_3_accepted(self, mock_set_attrs):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task, slot=3)
+        self.assertEqual(3, mock_set_attrs.call_count)
+        self.assertEqual('sl1-monitor',
+                         mock_set_attrs.call_args_list[0][0][1][
+                             'Users.3.UserName'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_partial_inventory(self, mock_set):
+        # A present-but-incomplete inventory must raise a clean
+        # InvalidParameterValue, not a raw KeyError/TypeError.
+        self._snmpv3_conf(username='explicit', service_tag=None)
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            for inventory_data in ({},
+                                   {'system_vendor': {}},
+                                   {'system_vendor': {'serial_number': ''}}):
+                with self.subTest(inventory_data=inventory_data):
+                    obj_utils.create_test_inventory(
+                        self.context, self.node,
+                        inventory_data=inventory_data, plugin_data={})
+                    self.assertRaises(
+                        exception.InvalidParameterValue,
+                        self.management.configure_snmpv3_user, task)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_custom_prefix(self, mock_set):
+        # A custom prefix changes only the username, not the passphrases.
+        master = 'test-master-key-0123456789abcdefgh'
+        self._snmpv3_conf(master=master)
+        self.config(snmpv3_username_prefix='mon01', group='drac')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task)
+        self.assertEqual('mon01-abc1234',
+                         mock_set.call_args_list[0][0][1]['Users.3.UserName'])
+        attributes = mock_set.call_args_list[1][0][1]
+        # Passphrases are derived with the default prefix and must not change.
+        expected = snmpv3.derive_credentials(master, 'ABC1234')
+        self.assertEqual(expected['auth_passphrase'],
+                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+        self.assertEqual(expected['privacy_passphrase'],
+                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_login_password_complexity(self, mock_set):
+        # The generated login password must satisfy iDRAC complexity: at least
+        # one uppercase, lowercase, digit and allowed special character.
+        self._snmpv3_conf(username='sl1-monitor')
+        for _unused in range(20):
+            with task_manager.acquire(self.context, self.node.uuid,
+                                      shared=False) as task:
+                self.management.configure_snmpv3_user(task)
+            password = mock_set.call_args_list[0][0][1]['Users.3.Password']
+            self.assertGreaterEqual(len(password), 20)
+            self.assertTrue(any(c.isupper() for c in password), password)
+            self.assertTrue(any(c.islower() for c in password), password)
+            self.assertTrue(any(c.isdigit() for c in password), password)
+            self.assertTrue(any(c in drac_mgmt._PASSWORD_SPECIAL
+                                for c in password), password)
+            mock_set.reset_mock()
+
+    def test_configure_snmpv3_user_bad_auth_protocol(self):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, auth_protocol='MD5SHA')
+
+    def test_configure_snmpv3_user_bad_privacy_protocol(self):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, privacy_protocol='RC4')
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_invalid_master(self, mock_set):
+        self._snmpv3_conf()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            for master in (None, '', 'short'):
+                self.config(snmpv3_master_key=master, group='drac')
+                self.assertRaises(exception.InvalidParameterValue,
+                                  self.management.configure_snmpv3_user, task)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_missing_identity(self, mock_set):
+        self._snmpv3_conf(username='explicit', service_tag=None)
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.NodeInventoryNotFound,
+                              self.management.configure_snmpv3_user, task)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_inspection_inventory(self, mock_set):
+        self._snmpv3_conf(service_tag=None)
+        self.config(data_backend='database', group='inventory')
+        obj_utils.create_test_inventory(
+            self.context, self.node,
+            inventory_data={'system_vendor': {'serial_number': ' abc1234 '}},
+            plugin_data={})
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task)
+        expected = snmpv3.derive_credentials(
+            'test-master-key-0123456789abcdefgh', 'ABC1234')
+        self.assertEqual(expected['username'],
+                         mock_set.call_args_list[0][0][1]['Users.3.UserName'])
+        attributes = mock_set.call_args_list[1][0][1]
+        self.assertEqual(expected['auth_passphrase'],
+                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+        self.assertEqual(expected['privacy_passphrase'],
+                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_invalid_inventory_identity(self, mock_set):
+        self._snmpv3_conf(service_tag=None)
+        self.config(data_backend='database', group='inventory')
+        obj_utils.create_test_inventory(
+            self.context, self.node,
+            inventory_data={'system_vendor': {'serial_number': 'invalid-tag'}},
+            plugin_data={})
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user, task)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_rejects_secret_step_args(self, mock_set):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(
+                exception.InvalidParameterValue,
+                self.management.configure_snmpv3_user, task,
+                extra_attributes={'Users.3.Password': 'secret'})
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_privacy_requires_auth(self, mock_set):
+        self._snmpv3_conf(username='sl1-monitor')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.assertRaises(exception.InvalidParameterValue,
+                              self.management.configure_snmpv3_user,
+                              task, auth_protocol='None')
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_derived_credentials(self, mock_set):
+        master = 'test-master-key-0123456789abcdefgh'
+        self._snmpv3_conf(master=master)
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            for tag in ('ABC1234', 'XYZ5678', 'ABC1234'):
+                self.snmpv3_inventory.inventory_data = {
+                    'system_vendor': {'serial_number': tag}}
+                obj_utils.create_test_inventory(
+                    self.context, self.node,
+                    inventory_data=self.snmpv3_inventory.inventory_data,
+                    plugin_data={})
+                self.management.configure_snmpv3_user(task)
+        payloads = [mock_set.call_args_list[i][0][1] for i in (1, 4, 7)]
+        expected = snmpv3.derive_credentials(master, 'ABC1234')
+        self.assertEqual(expected['auth_passphrase'],
+                         payloads[0]['Users.3.SNMPv3AuthenticationPassphrase'])
+        self.assertEqual(expected['privacy_passphrase'],
+                         payloads[0]['Users.3.SNMPv3PrivacyPassphrase'])
+        self.assertEqual(payloads[0], payloads[2])
+        self.assertNotEqual(payloads[0], payloads[1])
+        for call in mock_set.call_args_list:
+            self.assertNotIn(master, str(call))
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_invalid_identity(self, mock_set):
+        self._snmpv3_conf(username='explicit')
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            for tag in ('ABC123', 'AB-1234', 'ABſ1234'):
+                self.snmpv3_inventory.inventory_data = {
+                    'system_vendor': {'serial_number': tag}}
+                obj_utils.create_test_inventory(
+                    self.context, self.node,
+                    inventory_data=self.snmpv3_inventory.inventory_data,
+                    plugin_data={})
+                self.assertRaises(exception.InvalidParameterValue,
+                                  self.management.configure_snmpv3_user, task)
+        mock_set.assert_not_called()
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_normalized_identity(self, mock_set):
+        self._snmpv3_conf()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.snmpv3_inventory.inventory_data = {
+                'system_vendor': {'serial_number': ' abc1234 '}}
+            obj_utils.create_test_inventory(
+                self.context, self.node,
+                inventory_data=self.snmpv3_inventory.inventory_data,
+                plugin_data={})
+            self.management.configure_snmpv3_user(task)
+        account = mock_set.call_args_list[0][0][1]
+        attributes = mock_set.call_args_list[1][0][1]
+        expected = snmpv3.derive_credentials(
+            'test-master-key-0123456789abcdefgh', 'ABC1234')
+        self.assertEqual(expected['username'], account['Users.3.UserName'])
+        self.assertEqual(expected['auth_passphrase'],
+                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+        self.assertEqual(expected['privacy_passphrase'],
+                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
