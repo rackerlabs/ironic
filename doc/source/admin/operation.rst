@@ -9,6 +9,7 @@ Configuration and Operation
    Port Groups <portgroups>
    Conductor Groups <conductor-groups>
    Security <security>
+   Per-Node SNMPv3 Credential Derivation <snmpv3-credentials>
    Troubleshooting FAQ <troubleshooting>
    Power Synchronization <power-sync>
    Fast-Track Deployment <fast-track>
