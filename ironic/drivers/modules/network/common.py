@@ -693,76 +693,88 @@ class NeutronVIFPortIDMixin(VIFPortIDMixin):
                             {'node': task.node.uuid})
                 return
 
-        actions = plan.plan_vif_attach(applicable_traits, task, vif_info)
-
-        if len(actions) == 0 or plan.all_no_match(actions):
-            if CONF.conductor.trait_based_networking_raise_when_no_match:
-                raise exception.TBNNoPortMatchesFound(node=task.node.uuid,
-                                                      vif_id=vif_info['id'])
-            else:
-                LOG.warning(('_vif_attach_tbn: No trait generated networking '
-                             'actions to apply or ports to attach to the '
-                             'node %(node)s.'),
-                            {'node': task.node.uuid})
-                return
-
-        # NOTE(clif) Filter out any no matches, there will be some actual
-        # actions left over.
-        actions = [action for action in actions if
-                   not isinstance(action, tbn_base.NoMatch)]
-
         client = neutron.get_client(context=task.context)
+        try:
+            # Add the neutron port and network details used by the vif.* and
+            # network.* filter variables.
+            vif_info = {**vif_info,
+                        **neutron.get_vif_info(client, vif_info['id'])}
 
-        # NOTE(cardoe): Only execute the first matching action. A single VIF
-        # can only be bound once, so executing additional actions (e.g. a
-        # portgroup match followed by a match on one of its member ports)
-        # would attempt a second binding of the same VIF and fail the whole
-        # vif_attach() call.
-        action = actions[0]
+            actions = plan.plan_vif_attach(applicable_traits, task, vif_info)
 
-        match type(action):
-            case tbn_base.AttachPort | tbn_base.AttachPortgroup:
-                port_like_obj = action.get_portlike_object(task)
-                self._attach_port_to_vif(task, client, port_like_obj,
-                                         vif_info['id'])
+            if len(actions) == 0 or plan.all_no_match(actions):
+                if CONF.conductor.trait_based_networking_raise_when_no_match:
+                    raise exception.TBNNoPortMatchesFound(
+                        node=task.node.uuid, vif_id=vif_info['id'])
+                else:
+                    LOG.warning(('_vif_attach_tbn: No trait generated '
+                                 'networking actions to apply or ports to '
+                                 'attach to the node %(node)s.'),
+                                {'node': task.node.uuid})
+                    return
 
-            case tbn_base.GroupAndAttachPorts:
-                # Get each constituent port information
-                try:
-                    dyn_pg_ports = [
-                        objects.Port.get_by_uuid(task.context, uuid)
-                        for uuid in action.port_uuids
-                    ]
-                except exception.PortNotFound as e:
-                    msg = (_("A selected port for the dynamic "
-                             "portgroup was not found. %(exc)s")
-                           % {'exc': e})
-                    raise exception.NetworkError(msg)
+            # NOTE(clif) Filter out any no matches, there will be some actual
+            # actions left over.
+            actions = [action for action in actions
+                       if not isinstance(action, tbn_base.NoMatch)]
 
-                dyn_portgroup = self._create_dynamic_portgroup(
-                    task, dyn_pg_ports[0])
+            # NOTE(cardoe): Only execute the first matching action. A single
+            # VIF can only be bound once, so executing additional actions
+            # (e.g. a portgroup match followed by a match on one of its member
+            # ports) would attempt a second binding of the same VIF and fail
+            # the whole vif_attach() call.
+            action = actions[0]
 
-                # Update every port so it is part of the new portgroup
-                for port in dyn_pg_ports:
-                    port.portgroup_id = dyn_portgroup.id
+            match type(action):
+                case tbn_base.AttachPort | tbn_base.AttachPortgroup:
+                    port_like_obj = action.get_portlike_object(task)
+                    self._attach_port_to_vif(task, client, port_like_obj,
+                                             vif_info['id'])
+
+                case tbn_base.GroupAndAttachPorts:
+                    # Get each constituent port information
                     try:
-                        port.save()
-                    except (exception.PortNotFound,
-                            exception.MACAlreadyExists) as e:
-                        msg = (_('Could not update port to belong to '
-                                 'dynamic portgroup. '
-                                 '%(exc)s') % {'exc': e})
-                        LOG.error(msg)
+                        dyn_pg_ports = [
+                            objects.Port.get_by_uuid(task.context, uuid)
+                            for uuid in action.port_uuids
+                        ]
+                    except exception.PortNotFound as e:
+                        msg = (_("A selected port for the dynamic "
+                                 "portgroup was not found. %(exc)s")
+                               % {'exc': e})
                         raise exception.NetworkError(msg)
 
-                # Attach the dynamic portgroup to the network.
-                self._attach_port_to_vif(task, client, dyn_portgroup,
-                                         vif_info['id'])
+                    dyn_portgroup = self._create_dynamic_portgroup(
+                        task, dyn_pg_ports[0])
 
-            case _:
-                LOG.warning(('_vif_attach_tbn: Unhandled action '
-                             'encountered: \'s(action)%\'.',
-                             {'action': type(action)}))
+                    # Update every port so it is part of the new portgroup
+                    for port in dyn_pg_ports:
+                        port.portgroup_id = dyn_portgroup.id
+                        try:
+                            port.save()
+                        except (exception.PortNotFound,
+                                exception.MACAlreadyExists) as e:
+                            msg = (_('Could not update port to belong to '
+                                     'dynamic portgroup. '
+                                     '%(exc)s') % {'exc': e})
+                            LOG.error(msg)
+                            raise exception.NetworkError(msg)
+
+                    # Attach the dynamic portgroup to the network.
+                    self._attach_port_to_vif(task, client, dyn_portgroup,
+                                             vif_info['id'])
+
+                case _:
+                    msg = (_('Unable to attach VIF %(vif)s to node %(node)s. '
+                             'Trait Based Networking selected an action '
+                             'which cannot be handled: %(action)s') %
+                           {'vif': vif_info['id'], 'node': task.node.uuid,
+                            'action': action})
+                    LOG.error(msg)
+                    raise exception.NetworkError(msg)
+        finally:
+            client.close()
+
 
     def _attach_port_to_vif(self, task, client, port_like_obj, vif_id):
         """Do the actual work of attaching a port to a vif
