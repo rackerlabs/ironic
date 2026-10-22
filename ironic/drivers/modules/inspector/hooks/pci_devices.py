@@ -61,15 +61,19 @@ class PciDevicesHook(base.InspectionHook):
     def __call__(self, task, inventory, plugin_data):
         """Update node capabilities with PCI devices."""
 
-        if 'pci_devices' not in plugin_data:
+        if 'pci_devices' in plugin_data:
+            found_pci_devices = plugin_data['pci_devices']
+        else:
+            found_pci_devices = inventory.get('pci_devices')
+
+        if found_pci_devices is None:
             if CONF.inspector.pci_device_alias:
                 LOG.warning('No information about PCI devices was received '
-                            'from the ramdisk.')
+                            'during inspection.')
             return
 
         alias_count = {self._aliases[id_pair]: count for id_pair, count in
-                       self._found_pci_devices_count(
-                           plugin_data['pci_devices']).items()}
+                       self._found_pci_devices_count(found_pci_devices).items()}
         if alias_count:
             LOG.info('Found the following PCI devices: %s', alias_count)
 

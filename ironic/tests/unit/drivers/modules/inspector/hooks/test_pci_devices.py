@@ -71,3 +71,19 @@ class PciDevicesTestCase(db_base.DbTestCase):
             result = self.node.properties.get('capabilities', '')
             expected = 'EightyTwentyTwo:1,EightyEighteen:1,OneBZeroC:2'
             self.assertEqual(expected, result)
+
+    def test_pci_devices_from_inventory(self):
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.pci_devices_hook.__call__(task, _PLUGIN_DATA, {})
+            self.node.refresh()
+            result = self.node.properties.get('capabilities', '')
+            expected = 'EightyTwentyTwo:1,EightyEighteen:1,OneBZeroC:2'
+            self.assertEqual(expected, result)
+
+    def test_pci_devices_plugin_data_takes_precedence(self):
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.pci_devices_hook.__call__(task, _PLUGIN_DATA,
+                                           {'pci_devices': []})
+            self.node.refresh()
+            result = self.node.properties.get('capabilities', '')
+            self.assertEqual('', result)
