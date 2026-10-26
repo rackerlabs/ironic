@@ -18,6 +18,8 @@
 import contextlib
 import io
 import json
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -166,3 +168,151 @@ class Snmpv3TestCase(unittest.TestCase):
                 snmpv3.main(['ABC1234', '--config-file', 'config'])
         self.assertEqual(snmpv3.derive_credentials(master, 'ABC1234'),
                          json.loads(output.getvalue()))
+
+    def _write(self, directory, name, text):
+        path = os.path.join(directory, name)
+        with open(path, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+        return path
+
+    def test_cli_output_file_is_owner_only_and_not_logged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            output = os.path.join(directory, 'vars.json')
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                snmpv3.main(['ABC1234', '--config-file', config,
+                             '--output-file', output])
+            self.assertEqual('', stdout.getvalue())
+            self.assertEqual(0o600, os.stat(output).st_mode & 0o777)
+            with open(output, encoding='utf-8') as stream:
+                written = json.load(stream)
+            self.assertEqual(snmpv3.derive_credentials(self.master, 'ABC1234'),
+                             written)
+
+    def test_cli_output_file_forces_owner_only_over_existing_file(self):
+        # A world-readable file left by a prior run must not leak the secret.
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            output = self._write(directory, 'vars.json', 'stale')
+            os.chmod(output, 0o644)
+            snmpv3.main(['ABC1234', '--config-file', config,
+                         '--output-file', output])
+            self.assertEqual(0o600, os.stat(output).st_mode & 0o777)
+            with open(output, encoding='utf-8') as stream:
+                self.assertEqual(snmpv3.derive_credentials(self.master,
+                                                           'ABC1234'),
+                                 json.load(stream))
+
+    def test_cli_reads_tag_and_prefix_from_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            node = self._write(directory, 'node.json',
+                               json.dumps({'sl1_node_service_tag': 'ABC1234'}))
+            site = self._write(directory, 'site.json', json.dumps(
+                {'sl1_site_profile': {'snmp_username_prefix': 'ucsl1'}}))
+            output = os.path.join(directory, 'vars.json')
+            snmpv3.main([
+                '--service-tag-from', node + ':sl1_node_service_tag',
+                '--prefix-from',
+                site + ':sl1_site_profile.snmp_username_prefix',
+                '--config-file', config, '--output-file', output])
+            with open(output, encoding='utf-8') as stream:
+                written = json.load(stream)
+            expected = snmpv3.derive_credentials(self.master, 'ABC1234',
+                                                 prefix='ucsl1')
+            self.assertEqual(expected, written)
+            self.assertEqual('ucsl1-abc1234', written['username'])
+
+    def test_cli_key_map_renames_only_requested_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            output = os.path.join(directory, 'vars.json')
+            snmpv3.main([
+                'ABC1234', '--config-file', config, '--output-file', output,
+                '--key-map',
+                'username=sl1_snmp_username,'
+                'auth_passphrase=sl1_snmp_auth_passphrase,'
+                'privacy_passphrase=sl1_snmp_privacy_passphrase'])
+            with open(output, encoding='utf-8') as stream:
+                written = json.load(stream)
+            base = snmpv3.derive_credentials(self.master, 'ABC1234')
+            self.assertEqual({
+                'sl1_snmp_username': base['username'],
+                'sl1_snmp_auth_passphrase': base['auth_passphrase'],
+                'sl1_snmp_privacy_passphrase': base['privacy_passphrase'],
+            }, written)
+
+    def test_cli_requires_a_tag_source(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as exc:
+                snmpv3.main(['--config-file', 'config'])
+        self.assertEqual(2, exc.exception.code)
+
+    def test_cli_source_spec_splits_on_the_last_colon(self):
+        # An absolute path contains no colon, so path:key is unambiguous even
+        # when the key itself is a dotted path.
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            node = self._write(directory, 'node.json', json.dumps(
+                {'identity': {'service_tag': 'ABC1234'}}))
+            output = os.path.join(directory, 'vars.json')
+            snmpv3.main(['--service-tag-from',
+                         node + ':identity.service_tag',
+                         '--config-file', config, '--output-file', output])
+            with open(output, encoding='utf-8') as stream:
+                self.assertEqual(snmpv3.derive_credentials(self.master,
+                                                           'ABC1234'),
+                                 json.load(stream))
+
+    def test_cli_rejects_a_malformed_source_spec(self):
+        for spec in ('no-colon', ':key', '/path:', '/path:a..b'):
+            with self.subTest(spec=spec):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as exc:
+                        snmpv3.main(['--service-tag-from', spec,
+                                     '--config-file', 'config'])
+                self.assertEqual(2, exc.exception.code)
+
+    def test_cli_file_error_does_not_echo_master_or_leave_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            node = self._write(directory, 'node.json',
+                               json.dumps({'sl1_node_service_tag': 'bad'}))
+            output = os.path.join(directory, 'vars.json')
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                with self.assertRaises(SystemExit) as exc:
+                    snmpv3.main(['--service-tag-from',
+                                 node + ':sl1_node_service_tag',
+                                 '--config-file', config,
+                                 '--output-file', output])
+            self.assertEqual(2, exc.exception.code)
+            self.assertNotIn(self.master, err.getvalue())
+            self.assertFalse(os.path.exists(output))
+
+    def test_cli_write_failure_reports_the_path_not_derivation(self):
+        # A failed write is distinct from a derivation error: it names the
+        # output path, carries no secret, and exits without a traceback.
+        with tempfile.TemporaryDirectory() as directory:
+            config = self._write(
+                directory, 'snmpv3.conf',
+                '[drac]\nsnmpv3_master_key = ' + self.master + '\n')
+            output = os.path.join(directory, 'missing-dir', 'vars.json')
+            with self.assertRaises(SystemExit) as exc:
+                snmpv3.main(['ABC1234', '--config-file', config,
+                             '--output-file', output])
+            message = str(exc.exception)
+            self.assertIn(output, message)
+            self.assertNotIn(self.master, message)
+            self.assertNotIn('Cannot derive credentials', message)
