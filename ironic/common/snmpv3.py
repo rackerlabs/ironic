@@ -28,6 +28,7 @@ import argparse
 import configparser
 import hmac
 import json
+import os
 import re
 
 
@@ -81,29 +82,118 @@ def derive_credentials(master_key, service_tag, prefix='uc'):
     return result
 
 
-def main(argv=None):
-    """Explicitly export one node's credentials for trusted provisioning."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('service_tag')
-    parser.add_argument('--config-file', required=True,
-                        help='Protected INI file with [drac]snmpv3_master_key')
-    parser.add_argument('--prefix', default='uc',
-                        help='Username prefix, producing '
-                             '<prefix>-<lowercase service tag> (default uc)')
-    args = parser.parse_args(argv)
+def _read_json_source(spec):
+    """Return a field from a JSON file named by a ``path:a.b.c`` spec."""
+    path, sep, dotted_key = spec.rpartition(':')
+    keys = dotted_key.split('.')
+    if not sep or not path or not all(keys):
+        raise ValueError('a JSON source must be path:key (key may be a.b.c)')
+    with open(path, encoding='utf-8') as stream:
+        value = json.load(stream)
+    for key in keys:
+        value = value[key]
+    return value
+
+
+def _parse_key_map(spec):
+    """Parse ``old=new,...`` into a mapping of output-key renames."""
+    mapping = {}
+    for pair in spec.split(','):
+        old, sep, new = pair.partition('=')
+        if not sep or not old or not new:
+            raise ValueError('key map entries must be old=new')
+        mapping[old] = new
+    return mapping
+
+
+def _read_master_key(config_file):
+    """Return [drac]snmpv3_master_key from a protected INI file."""
     config = configparser.ConfigParser(interpolation=None)
+    with open(config_file, encoding='utf-8') as stream:
+        config.read_file(stream)
+    return config.get('drac', 'snmpv3_master_key')
+
+
+def _write_secret_file(path, text):
+    """Write ``text`` via a 0600 temporary sibling renamed over ``path``.
+
+    The rename forces owner-only permissions even over an existing file and
+    never exposes a partially written file.
+    """
+    directory = os.path.dirname(path) or '.'
+    temporary = os.path.join(directory, '.%s.tmp' % os.path.basename(path))
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                         0o600)
     try:
-        with open(args.config_file, encoding='utf-8') as stream:
-            config.read_file(stream)
-        master = config.get('drac', 'snmpv3_master_key')
-        credentials = derive_credentials(master, args.service_tag,
-                                         prefix=args.prefix)
-    except (OSError, configparser.Error, ValueError):
-        # Parser errors may contain the INI line holding the master secret.
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, 'w') as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
+def _build_parser():
+    """Build the command-line parser for :func:`main`."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    tag_source = parser.add_mutually_exclusive_group(required=True)
+    tag_source.add_argument('service_tag', nargs='?',
+                            help='Dell service tag (seven ASCII characters)')
+    tag_source.add_argument(
+        '--service-tag-from', metavar='PATH:KEY',
+        help='read the tag from JSON, e.g. /run/node.json:node.service_tag')
+    parser.add_argument('--config-file', required=True,
+                        help='INI file with [drac]snmpv3_master_key')
+    prefix_source = parser.add_mutually_exclusive_group()
+    prefix_source.add_argument(
+        '--prefix', default='uc', help='username prefix (default uc)')
+    prefix_source.add_argument(
+        '--prefix-from', metavar='PATH:KEY',
+        help='read the prefix from JSON, e.g. /run/site.json:profile.prefix')
+    parser.add_argument(
+        '--output-file',
+        help='write JSON to this 0600 file instead of stdout')
+    parser.add_argument(
+        '--key-map', metavar='OLD=NEW,...',
+        help='rename output keys, e.g. username=sl1_snmp_username')
+    return parser
+
+
+def _resolve_credentials(args):
+    """Derive the credentials as a dict, reading every secret-bearing input."""
+    service_tag = (args.service_tag if args.service_tag is not None
+                   else _read_json_source(args.service_tag_from))
+    prefix = (_read_json_source(args.prefix_from)
+              if args.prefix_from else args.prefix)
+    credentials = derive_credentials(_read_master_key(args.config_file),
+                                     service_tag, prefix=prefix)
+    if args.key_map:
+        renames = _parse_key_map(args.key_map)
+        credentials = {renames.get(key, key): value
+                       for key, value in credentials.items()}
+    return credentials
+
+
+def main(argv=None):
+    """Export one node's credentials as JSON for trusted provisioning."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    try:
+        credentials = _resolve_credentials(args)
+    except (OSError, TypeError, KeyError, configparser.Error, ValueError):
+        # The underlying error can carry the master, so report a fixed message.
         parser.error('Cannot derive credentials: check the protected config '
-                     'file, master key length, and seven-character '
-                     'service tag')
-    print(json.dumps(credentials))
+                     'file, master key length, service tag and prefix inputs')
+    serialized = json.dumps(credentials)
+    if not args.output_file:
+        print(serialized)
+        return
+    try:
+        _write_secret_file(args.output_file, serialized)
+    except OSError as error:
+        raise SystemExit('Cannot write %s: %s' % (
+            args.output_file, error.strerror or error))
 
 
 if __name__ == '__main__':
