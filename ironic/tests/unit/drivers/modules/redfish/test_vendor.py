@@ -18,6 +18,7 @@ from unittest import mock
 import sushy
 
 from ironic.common import exception
+from ironic.common import states
 from ironic.conductor import task_manager
 from ironic.drivers.modules.redfish import boot as redfish_boot
 from ironic.drivers.modules.redfish import utils as redfish_utils
@@ -41,6 +42,46 @@ class RedfishVendorPassthruTestCase(db_base.DbTestCase):
                     enabled_vendor_interfaces=['redfish'])
         self.node = obj_utils.create_test_node(
             self.context, driver='redfish', driver_info=INFO_DICT)
+
+    def test_configure_snmpv3_route(self):
+        route = redfish_vendor.RedfishVendorPassthru().vendor_routes[
+            'configure_snmpv3_user']
+        self.assertFalse(route['async'])
+        self.assertTrue(route['require_exclusive_lock'])
+        self.assertEqual(['POST'], route['http_methods'])
+
+    def test_configure_snmpv3_unsupported_management(self):
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            self.assertRaises(exception.UnsupportedDriverExtension,
+                              task.driver.vendor.configure_snmpv3_user, task)
+
+    def test_configure_snmpv3_rejects_arguments(self):
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            for args in ({'slot': 2}, {'slot': 17}, {'slot': True},
+                         {'slot': '5'}, {'username': 'override'},
+                         {'auth_passphrase': 'secret'}):
+                with self.subTest(args=args):
+                    self.assertRaises(
+                        exception.InvalidParameterValue,
+                        task.driver.vendor.configure_snmpv3_user, task, **args)
+
+    def test_configure_snmpv3_defers_busy_operations(self):
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            with mock.patch.object(
+                    task.driver, 'management',
+                    spec_set=['configure_snmpv3_user']) as management:
+                for state in states.UNSTABLE_STATES:
+                    with self.subTest(state=state):
+                        task.node.provision_state = state
+                        self.assertRaises(
+                            exception.InvalidState,
+                            task.driver.vendor.configure_snmpv3_user, task)
+                task.node.provision_state = states.ACTIVE
+                task.node.target_power_state = states.POWER_OFF
+                self.assertRaises(exception.InvalidState,
+                                  task.driver.vendor.configure_snmpv3_user,
+                                  task)
+                management.configure_snmpv3_user.assert_not_called()
 
     @mock.patch.object(redfish_boot, 'eject_vmedia', autospec=True)
     def test_eject_vmedia_all(self, mock_eject_vmedia):

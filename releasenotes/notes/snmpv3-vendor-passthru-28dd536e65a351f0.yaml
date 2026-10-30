@@ -1,0 +1,8 @@
+---
+features:
+  - |
+    Adds a synchronous ``configure_snmpv3_user`` node vendor operation for
+    ``redfish`` and ``idrac-redfish`` vendor interfaces with ``idrac-redfish``
+    management. It configures the SNMPv3 user without provisioning transitions
+    and defaults to user slot 5, matching the clean and service steps.
+    In-progress provisioning and power operations return a retryable conflict.

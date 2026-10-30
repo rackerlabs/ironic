@@ -22,6 +22,7 @@ import sushy
 from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.common import metrics_utils
+from ironic.common import states
 from ironic.common import validate
 from ironic.drivers import base
 from ironic.drivers.modules.redfish import boot as redfish_boot
@@ -54,6 +55,9 @@ class RedfishVendorPassthru(base.VendorInterface):
         :raises: InvalidParameterValue, if any of the parameters have invalid
             value.
         """
+        if method == 'configure_snmpv3_user':
+            self._validate_configure_snmpv3_user(task, kwargs)
+            return
         if method == 'eject_vmedia':
             self._validate_eject_vmedia(task, kwargs)
             return
@@ -64,6 +68,35 @@ class RedfishVendorPassthru(base.VendorInterface):
             self._validate_delete_subscription(task, kwargs)
             return
         super(RedfishVendorPassthru, self).validate(task, method, **kwargs)
+
+    def _validate_configure_snmpv3_user(self, task, kwargs):
+        if set(kwargs) - {'slot', 'http_method'}:
+            raise exception.InvalidParameterValue(
+                _('Only slot is accepted for SNMPv3 configuration'))
+        slot = kwargs.get('slot', 5)
+        if (isinstance(slot, bool) or not isinstance(slot, int)
+                or not 3 <= slot <= 16):
+            raise exception.InvalidParameterValue(
+                _('slot must be an integer from 3 to 16'))
+        if not callable(getattr(task.driver.management,
+                                'configure_snmpv3_user', None)):
+            raise exception.UnsupportedDriverExtension(
+                driver=task.node.driver, extension='configure_snmpv3_user')
+        if (task.node.provision_state in states.UNSTABLE_STATES
+                or task.node.target_power_state is not None):
+            raise exception.InvalidState(
+                _('Node %s has an operation in progress; retry SNMPv3 '
+                  'configuration when it completes') % task.node.uuid)
+
+    @base.passthru(['POST'], async_call=False,
+                   description=_("Configure SNMPv3 without node transitions. "
+                                 "Optional argument: slot (3-16, default 5)."))
+    def configure_snmpv3_user(self, task, **kwargs):
+        """Configure the BMC using conductor-derived SNMPv3 credentials."""
+        self._validate_configure_snmpv3_user(task, kwargs)
+        task.driver.management.configure_snmpv3_user(
+            task, slot=kwargs.get('slot', 5))
+        return {'configured': True}
 
     def _validate_eject_vmedia(self, task, kwargs):
         """Verify that the boot_device input is valid."""

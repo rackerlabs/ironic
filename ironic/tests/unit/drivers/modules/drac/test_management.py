@@ -39,6 +39,7 @@ from ironic.drivers.modules import deploy_utils
 from ironic.drivers.modules.drac import management as drac_mgmt
 from ironic.drivers.modules.drac import utils as drac_utils
 from ironic.drivers.modules.redfish import utils as redfish_utils
+from ironic.drivers.modules.redfish import vendor as redfish_vendor
 from ironic.tests.unit.drivers.modules.drac import utils as test_utils
 from ironic.tests.unit.objects import utils as obj_utils
 
@@ -1324,6 +1325,31 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
 
     # configure_snmpv3_user tests
 
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_snmpv3_vendor_passthru_preserves_node(self, mock_set_attrs):
+        self._snmpv3_conf()
+        vendor = redfish_vendor.RedfishVendorPassthru()
+        for state in (
+                *states.STABLE_STATES, states.CLEANFAIL, states.DEPLOYFAIL,
+                states.INSPECTFAIL, states.SERVICEFAIL):
+            with self.subTest(state=state):
+                self.node.provision_state = state
+                self.node.maintenance = True
+                self.node.automated_clean = None
+                self.node.instance_uuid = (
+                    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+                self.node.save()
+                with task_manager.acquire(self.context,
+                                          self.node.uuid) as task:
+                    before = task.node.as_dict()
+                    result = vendor.configure_snmpv3_user(task)
+                    self.assertEqual({'configured': True}, result)
+                    self.assertEqual(before, task.node.as_dict())
+                self.assertEqual(3, mock_set_attrs.call_count)
+                self.assertIn('Users.5.UserName',
+                              mock_set_attrs.call_args_list[0].args[1])
+                mock_set_attrs.reset_mock()
+
     def _snmpv3_conf(self, master='test-master-key-0123456789abcdefgh',
                      username=None, service_tag='ABC1234'):
         self.config(snmpv3_master_key=master, group='drac')
@@ -1346,21 +1372,21 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         attrs = mock_set_attrs.call_args_list[1][0][1]
         self.assertEqual('sl1-monitor',
                          mock_set_attrs.call_args_list[0][0][1][
-                             'Users.3.UserName'])
+                             'Users.5.UserName'])
         self.assertEqual(24, len(mock_set_attrs.call_args_list[0][0][1][
-            'Users.3.Password']))
-        self.assertEqual({'Users.3.EnableSNMPv3Passphrase': 'Enabled'},
+            'Users.5.Password']))
+        self.assertEqual({'Users.5.EnableSNMPv3Passphrase': 'Enabled'},
                          mock_set_attrs.call_args_list[2][0][1])
-        self.assertEqual('Enabled',   attrs['Users.3.Enable'])
-        self.assertEqual(1,           attrs['Users.3.Privilege'])
-        self.assertEqual('No Access', attrs['Users.3.IpmiLanPrivilege'])
-        self.assertEqual('No Access', attrs['Users.3.IpmiSerialPrivilege'])
-        self.assertEqual('Disabled',  attrs['Users.3.SolEnable'])
-        self.assertEqual('Enabled',   attrs['Users.3.ProtocolEnable'])
-        self.assertEqual('SHA',       attrs['Users.3.AuthenticationProtocol'])
-        self.assertEqual('AES',    attrs['Users.3.PrivacyProtocol'])
-        self.assertIn('Users.3.SNMPv3AuthenticationPassphrase', attrs)
-        self.assertIn('Users.3.SNMPv3PrivacyPassphrase', attrs)
+        self.assertEqual('Enabled',   attrs['Users.5.Enable'])
+        self.assertEqual(1,           attrs['Users.5.Privilege'])
+        self.assertEqual('No Access', attrs['Users.5.IpmiLanPrivilege'])
+        self.assertEqual('No Access', attrs['Users.5.IpmiSerialPrivilege'])
+        self.assertEqual('Disabled',  attrs['Users.5.SolEnable'])
+        self.assertEqual('Enabled',   attrs['Users.5.ProtocolEnable'])
+        self.assertEqual('SHA',       attrs['Users.5.AuthenticationProtocol'])
+        self.assertEqual('AES',    attrs['Users.5.PrivacyProtocol'])
+        self.assertIn('Users.5.SNMPv3AuthenticationPassphrase', attrs)
+        self.assertIn('Users.5.SNMPv3PrivacyPassphrase', attrs)
         self.assertEqual('iDRAC', mock_set_attrs.call_args[1]['target'])
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
@@ -1384,7 +1410,7 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
             self.management.configure_snmpv3_user(task)
         self.assertEqual('uc-abc1234',
                          mock_set_attrs.call_args_list[0][0][1][
-                             'Users.3.UserName'])
+                             'Users.5.UserName'])
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
     def test_configure_snmpv3_user_username_arg_overrides_conf(
@@ -1395,7 +1421,7 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
             self.management.configure_snmpv3_user(task, username='override')
         self.assertEqual('override',
                          mock_set_attrs.call_args_list[0][0][1][
-                             'Users.3.UserName'])
+                             'Users.5.UserName'])
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
     def test_configure_snmpv3_user_extra_attributes(self, mock_set_attrs):
@@ -1475,14 +1501,14 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
                                   shared=False) as task:
             self.management.configure_snmpv3_user(task)
         self.assertEqual('mon01-abc1234',
-                         mock_set.call_args_list[0][0][1]['Users.3.UserName'])
+                         mock_set.call_args_list[0][0][1]['Users.5.UserName'])
         attributes = mock_set.call_args_list[1][0][1]
         # Passphrases are derived with the default prefix and must not change.
         expected = snmpv3.derive_credentials(master, 'ABC1234')
         self.assertEqual(expected['auth_passphrase'],
-                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+                         attributes['Users.5.SNMPv3AuthenticationPassphrase'])
         self.assertEqual(expected['privacy_passphrase'],
-                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
+                         attributes['Users.5.SNMPv3PrivacyPassphrase'])
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
     def test_configure_snmpv3_user_login_password_complexity(self, mock_set):
@@ -1493,7 +1519,7 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
             with task_manager.acquire(self.context, self.node.uuid,
                                       shared=False) as task:
                 self.management.configure_snmpv3_user(task)
-            password = mock_set.call_args_list[0][0][1]['Users.3.Password']
+            password = mock_set.call_args_list[0][0][1]['Users.5.Password']
             self.assertGreaterEqual(len(password), 20)
             self.assertTrue(any(c.isupper() for c in password), password)
             self.assertTrue(any(c.islower() for c in password), password)
@@ -1552,12 +1578,12 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         expected = snmpv3.derive_credentials(
             'test-master-key-0123456789abcdefgh', 'ABC1234')
         self.assertEqual(expected['username'],
-                         mock_set.call_args_list[0][0][1]['Users.3.UserName'])
+                         mock_set.call_args_list[0][0][1]['Users.5.UserName'])
         attributes = mock_set.call_args_list[1][0][1]
         self.assertEqual(expected['auth_passphrase'],
-                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+                         attributes['Users.5.SNMPv3AuthenticationPassphrase'])
         self.assertEqual(expected['privacy_passphrase'],
-                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
+                         attributes['Users.5.SNMPv3PrivacyPassphrase'])
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
     def test_configure_snmpv3_user_invalid_inventory_identity(self, mock_set):
@@ -1611,9 +1637,9 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         payloads = [mock_set.call_args_list[i][0][1] for i in (1, 4, 7)]
         expected = snmpv3.derive_credentials(master, 'ABC1234')
         self.assertEqual(expected['auth_passphrase'],
-                         payloads[0]['Users.3.SNMPv3AuthenticationPassphrase'])
+                         payloads[0]['Users.5.SNMPv3AuthenticationPassphrase'])
         self.assertEqual(expected['privacy_passphrase'],
-                         payloads[0]['Users.3.SNMPv3PrivacyPassphrase'])
+                         payloads[0]['Users.5.SNMPv3PrivacyPassphrase'])
         self.assertEqual(payloads[0], payloads[2])
         self.assertNotEqual(payloads[0], payloads[1])
         for call in mock_set.call_args_list:
@@ -1651,8 +1677,8 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
         attributes = mock_set.call_args_list[1][0][1]
         expected = snmpv3.derive_credentials(
             'test-master-key-0123456789abcdefgh', 'ABC1234')
-        self.assertEqual(expected['username'], account['Users.3.UserName'])
+        self.assertEqual(expected['username'], account['Users.5.UserName'])
         self.assertEqual(expected['auth_passphrase'],
-                         attributes['Users.3.SNMPv3AuthenticationPassphrase'])
+                         attributes['Users.5.SNMPv3AuthenticationPassphrase'])
         self.assertEqual(expected['privacy_passphrase'],
-                         attributes['Users.3.SNMPv3PrivacyPassphrase'])
+                         attributes['Users.5.SNMPv3PrivacyPassphrase'])
