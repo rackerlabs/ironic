@@ -244,7 +244,7 @@ _CONFIGURE_SNMPV3_USER_ARGSINFO = {
         'description': (
             'iDRAC local user slot to program (%(min)d-%(max)d). Slots 1 '
             'and 2 are reserved (slot 2 holds the factory root account on '
-            'iDRAC9). Default 3.'
+            'iDRAC9). Default 5.'
             % {'min': _MIN_IDRAC_USER_SLOT, 'max': _MAX_IDRAC_USER_SLOT}),
         'required': False,
     },
@@ -1101,7 +1101,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
     @base.service_step(priority=0, abortable=False,
                        argsinfo=_CONFIGURE_SNMPV3_USER_ARGSINFO,
                        requires_ramdisk=False)
-    def configure_snmpv3_user(self, task, username=None, slot=3,
+    def configure_snmpv3_user(self, task, username=None, slot=5,
                               auth_protocol='SHA', privacy_protocol='AES',
                               extra_attributes=None):
         """Configure an SNMPv3 credential on the iDRAC for SNMP polling.
@@ -1137,7 +1137,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             [drac]snmpv3_username_prefix (default ``"uc"``).
         :param slot: iDRAC user slot to program (3-16). Slots 1 and 2 are
             reserved (slot 2 holds the factory root account on iDRAC9).
-            Default 3.
+            Default 5.
         :param auth_protocol: SNMPv3 authentication protocol
             (SHA, MD5, None, SHA-384, SHA-512). Default ``"SHA"``.
         :param privacy_protocol: SNMPv3 privacy protocol
