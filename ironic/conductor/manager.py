@@ -429,6 +429,7 @@ class ConductorManager(base_manager.BaseConductorManager):
     @METRICS.timer('ConductorManager.vendor_passthru')
     @messaging.expected_exceptions(exception.NoFreeConductorWorker,
                                    exception.NodeLocked,
+                                   exception.InvalidState,
                                    exception.InvalidParameterValue,
                                    exception.UnsupportedDriverExtension)
     def vendor_passthru(self, context, node_id, driver_method,

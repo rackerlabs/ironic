@@ -525,7 +525,7 @@ that setting. Username overrides do not affect the passphrase derivation.
 Monitoring provisioning must use the same effective username and the shared
 helper's passphrases.
 
-The default user slot is 3, authentication protocol is SHA, and privacy
+The default user slot is 5, authentication protocol is SHA, and privacy
 protocol is AES. Valid slots are 3 to 16; slots 1 and 2 are rejected because
 slot 2 holds the factory root administrator account on iDRAC9. Choose a
 dedicated monitoring slot that is not used by another account. For example,
@@ -555,6 +555,30 @@ Provision the matching credentials in the monitoring system using the shared
 helper or lookup command described in :ref:`snmpv3-credential-derivation`.
 The step configures the BMC only. Coordinate master rotation, master recovery,
 or service-tag corrections with credential updates in the monitoring system.
+
+Configuration without provisioning transitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Nodes using ``idrac-redfish`` management and either ``redfish`` or
+``idrac-redfish`` vendor interfaces can configure the same account through
+vendor passthrough, independently of cleaning and servicing:
+
+The HTTP contract is ``POST /v1/nodes/{uuid}/vendor_passthru/configure_snmpv3_user``
+with a JSON body such as ``{"slot": 5}``. ``slot`` must be a JSON integer from
+3 to 16 and defaults to 5. No other configuration arguments are accepted.
+The existing node vendor-passthrough authorization policy applies.
+
+The request is synchronous: HTTP 200 with ``{"configured": true}`` means the
+BMC configuration completed. It holds the exclusive node lock and returns
+HTTP 409 while the node is locked or has an in-progress provisioning or power
+operation; the caller can retry. Idle and failed provisioning states, instance
+association, and maintenance do not prevent configuration. Unsupported
+management interfaces or invalid input return HTTP 400.
+
+The operation preserves node provisioning state, power state, maintenance,
+allocation, and automated-cleaning policy. It does not boot a ramdisk or run
+automated cleaning. Stored inspection inventory and the conductor's SNMPv3
+configuration are required, as for the clean and service step.
 
 RAID Interface
 ==============
