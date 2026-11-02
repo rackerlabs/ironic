@@ -1097,10 +1097,10 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
     @METRICS.timer('DracRedfishManagement.configure_snmpv3_user')
     @base.clean_step(priority=0, abortable=False,
                      argsinfo=_CONFIGURE_SNMPV3_USER_ARGSINFO,
-                     requires_ramdisk=False)
+                     requires_ramdisk=False, preserve_state_on_failure=True)
     @base.service_step(priority=0, abortable=False,
                        argsinfo=_CONFIGURE_SNMPV3_USER_ARGSINFO,
-                       requires_ramdisk=False)
+                       requires_ramdisk=False, preserve_state_on_failure=True)
     def configure_snmpv3_user(self, task, username=None, slot=3,
                               auth_protocol='SHA', privacy_protocol='AES',
                               extra_attributes=None):

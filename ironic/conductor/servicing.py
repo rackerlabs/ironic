@@ -216,6 +216,9 @@ def do_next_service_step(task, step_index, disable_ramdisk=None):
                      '%(exc)s') %
                    {'node': node.uuid, 'exc': e,
                     'step': node.service_step})
+            if utils.preserve_step_failure_state(
+                    task, step, 'service', disable_ramdisk, msg):
+                return
             if not disable_ramdisk:
                 driver_utils.collect_ramdisk_logs(task.node, label='service')
             utils.servicing_error_handler(task, msg, traceback=True)

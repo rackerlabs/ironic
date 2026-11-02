@@ -2043,7 +2043,7 @@ def _validate_argsinfo(argsinfo):
 
 
 def clean_step(priority, abortable=False, argsinfo=None,
-               requires_ramdisk=True):
+               requires_ramdisk=True, preserve_state_on_failure=False):
     """Decorator for cleaning steps.
 
     Cleaning steps may be used in manual or automated cleaning.
@@ -2099,8 +2099,15 @@ def clean_step(priority, abortable=False, argsinfo=None,
                         the clean request; false if it is optional.
     :param requires_ramdisk: Whether this step requires the ramdisk
         to be running. Should be set to False for purely out-of-band steps.
+    :param preserve_state_on_failure: For a standalone out-of-band step,
+        return to the original stable state on failure without teardown.
+        The error remains in last_error. Requires requires_ramdisk=False.
     :raises InvalidParameterValue: if any of the arguments are invalid
     """
+    if preserve_state_on_failure and requires_ramdisk:
+        raise exception.InvalidParameterValue(
+            _('State-preserving steps must not require a ramdisk'))
+
     def decorator(func):
         func._is_clean_step = True
         if isinstance(priority, int):
@@ -2120,6 +2127,8 @@ def clean_step(priority, abortable=False, argsinfo=None,
         _validate_argsinfo(argsinfo)
         func._clean_step_argsinfo = argsinfo
         func._clean_step_requires_ramdisk = requires_ramdisk
+        func._clean_step_preserve_state_on_failure = (
+            preserve_state_on_failure)
         return func
     return decorator
 
@@ -2235,7 +2244,7 @@ def verify_step(priority):
 
 
 def service_step(priority=None, abortable=False, argsinfo=None,
-                 requires_ramdisk=True):
+                 requires_ramdisk=True, preserve_state_on_failure=False):
     """Decorator for service steps.
 
     Service steps may be used in performing service upon a node.
@@ -2287,8 +2296,15 @@ def service_step(priority=None, abortable=False, argsinfo=None,
                         the service request; false if it is optional.
     :param requires_ramdisk: Whether this step requires the ramdisk
         to be running. Should be set to False for purely out-of-band steps.
+    :param preserve_state_on_failure: For a standalone out-of-band step,
+        return to the original stable state on failure without teardown.
+        The error remains in last_error. Requires requires_ramdisk=False.
     :raises InvalidParameterValue: if any of the arguments are invalid
     """
+    if preserve_state_on_failure and requires_ramdisk:
+        raise exception.InvalidParameterValue(
+            _('State-preserving steps must not require a ramdisk'))
+
     def decorator(func):
         func._is_service_step = True
         if isinstance(priority, int):
@@ -2309,5 +2325,7 @@ def service_step(priority=None, abortable=False, argsinfo=None,
         _validate_argsinfo(argsinfo)
         func._service_step_argsinfo = argsinfo
         func._service_step_requires_ramdisk = requires_ramdisk
+        func._service_step_preserve_state_on_failure = (
+            preserve_state_on_failure)
         return func
     return decorator
