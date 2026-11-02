@@ -1,0 +1,11 @@
+---
+fixes:
+  - |
+    Prevent a failed standalone ``idrac-redfish`` ``configure_snmpv3_user``
+    step from disrupting a node during manual cleaning or servicing with
+    the ramdisk disabled. Return to ``manageable`` or ``active`` without
+    teardown, failure power actions, or setting maintenance. Record the
+    failure in ``last_error`` and node history; clients must inspect the
+    error even when the requested stable state is reached. Automated
+    cleaning, compound plans, and ramdisk operations retain normal failure
+    handling. Partial BMC updates are not rolled back.

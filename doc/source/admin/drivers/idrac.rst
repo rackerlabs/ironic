@@ -501,6 +501,15 @@ SNMPv3 monitoring account. Its priority is zero, so it runs only when
 explicitly requested in cleaning, servicing, or a runbook. It requires no
 ramdisk.
 
+When this is the only step in manual cleaning or servicing and the ramdisk
+is disabled, an execution failure returns the node to ``manageable`` or
+``active``, respectively. The conductor skips teardown and failure power
+actions, and does not set maintenance or a failure fault. The error is
+recorded in ``last_error`` and node history. API clients must check
+``last_error`` even after the expected stable state is reached. Normal
+failure handling still applies to automated cleaning, compound plans, and
+operations that use the ramdisk. This does not roll back partial BMC updates.
+
 Configure a dedicated, high-entropy ``[drac]snmpv3_master_key`` of at least
 32 characters through a protected conductor configuration file. The option
 is marked secret. Keep the master separate from the BMC root-password master

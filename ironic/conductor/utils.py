@@ -680,6 +680,44 @@ def wipe_deploy_internal_info(task):
     async_steps.remove_node_flags(node)
 
 
+def preserve_step_failure_state(task, step, step_type, disable_ramdisk, msg):
+    """Finish a standalone, driver-approved out-of-band failure safely.
+
+    Only manual cleaning and servicing qualify. Never trust a flag supplied
+    in a runbook: the actual driver method must explicitly opt in. Compound
+    plans retain normal failure handling because other steps may need cleanup.
+    """
+    node = task.node
+    expected = states.MANAGEABLE if step_type == 'clean' else states.ACTIVE
+    plan = node.driver_internal_info.get(step_type + '_steps', [])
+    if (not disable_ramdisk or node.target_provision_state != expected
+            or not plan or len(plan) != 1
+            or step.get('execute_on_child_nodes')):
+        return False
+    interface = getattr(task.driver, step['interface'])
+    method = getattr(interface, step['step'], None)
+    prefix = '_' + step_type + '_step_'
+    if (not getattr(method, prefix + 'preserve_state_on_failure', False)
+            or getattr(method, prefix + 'requires_ramdisk', True)):
+        return False
+
+    LOG.error(msg)
+    # State and error are published in one save. Clients must inspect
+    # last_error even when the node has reached the requested stable state.
+    if step_type == 'clean':
+        node.clean_step = None
+        wipe_cleaning_internal_info(task)
+        task.driver.deploy.restore_interface(task)
+        event = 'manage'
+    else:
+        node.service_step = None
+        wipe_service_internal_info(task)
+        event = 'done'
+    node_history_record(node, event=msg, event_type=step_type, error=True)
+    task.process_event(event, last_error=msg)
+    return True
+
+
 def wipe_cleaning_internal_info(task):
     """Remove temporary cleaning fields from driver_internal_info."""
     if not fast_track_able(task):
