@@ -745,9 +745,12 @@ class RedfishManagement(base.ManagementInterface):
 
         for temps in chassis.thermal.temperatures:
             sensor = cls._sensor2dict(
-                temps, 'identity', 'max_reading_range_temp',
+                temps, 'identity', 'name', 'max_reading_range_temp',
                 'min_reading_range_temp', 'reading_celsius',
-                'physical_context', 'sensor_number')
+                'physical_context', 'sensor_number',
+                'upper_threshold_non_critical', 'upper_threshold_critical',
+                'upper_threshold_fatal', 'lower_threshold_non_critical',
+                'lower_threshold_critical', 'lower_threshold_fatal')
             sensor.update(cls._sensor2dict(temps.status, 'state', 'health'))
             unique_name = '%s@%s' % (temps.identity, chassis.identity)
             sensors[unique_name] = sensor
