@@ -1,0 +1,13 @@
+---
+features:
+  - |
+    The Redfish hardware sensor data for temperature sensors now includes the
+    human-readable sensor ``name`` along with the upper and lower warning,
+    critical, and fatal threshold values (``upper_threshold_non_critical``,
+    ``upper_threshold_critical``, ``upper_threshold_fatal``,
+    ``lower_threshold_non_critical``, ``lower_threshold_critical``, and
+    ``lower_threshold_fatal``). These fields are sourced from the Redfish
+    ``Thermal`` resource and are emitted in the ``hardware.<driver>.metrics``
+    notification payload, allowing consumers to identify a sensor by name
+    (for example "System Board Inlet Temp") and to reason about its
+    configured thresholds. Fields that the BMC does not report are omitted.
