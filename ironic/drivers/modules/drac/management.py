@@ -125,6 +125,51 @@ _MAX_IDRAC_USER_SLOT = 16
 # Valid SNMPv3 protocol choices as presented by the iDRAC DellAttributes API.
 _SNMPV3_AUTH_PROTOCOLS = ('SHA', 'MD5', 'None', 'SHA-384', 'SHA-512')
 _SNMPV3_PRIVACY_PROTOCOLS = ('AES', 'DES', 'None', 'AES-256')
+# Key in node.extra under which drivers publish the non-secret SNMPv3
+# handoff: {'username', 'auth_protocol', 'privacy_protocol'}. node.extra is
+# operator-writable, so consumers must treat it as a hint, not a secret store.
+NODE_EXTRA_KEY = 'snmpv3'
+
+
+def _set_snmpv3_extra(task, value):
+    """Set, or with None remove, the SNMPv3 handoff in node.extra."""
+    extra = dict(task.node.extra)
+    if value is None:
+        if NODE_EXTRA_KEY not in extra:
+            return
+        del extra[NODE_EXTRA_KEY]
+    else:
+        extra[NODE_EXTRA_KEY] = value
+    task.node.extra = extra
+    task.node.save()
+
+
+def _read_snmpv3_user(task, prefix, username):
+    """Read back a configured SNMPv3 user and return its protocols.
+
+    :raises: RedfishError naming each attribute that is not as expected.
+    :returns: tuple of (auth_protocol, privacy_protocol) as applied.
+    """
+    applied = drac_utils.get_dell_attributes(task, target='iDRAC')
+    checks = {
+        'UserName': applied.get(prefix + 'UserName') == username,
+        'Enable': applied.get(prefix + 'Enable') == 'Enabled',
+        'ProtocolEnable': applied.get(prefix + 'ProtocolEnable') == 'Enabled',
+        'EnableSNMPv3Passphrase':
+            applied.get(prefix + 'EnableSNMPv3Passphrase') == 'Enabled',
+        'AuthenticationProtocol': applied.get(
+            prefix + 'AuthenticationProtocol') in _SNMPV3_AUTH_PROTOCOLS,
+        'PrivacyProtocol': applied.get(
+            prefix + 'PrivacyProtocol') in _SNMPV3_PRIVACY_PROTOCOLS,
+    }
+    bad = [name for name, ok in checks.items() if not ok]
+    if bad:
+        raise exception.RedfishError(
+            error=_('BMC SNMPv3 user readback is incomplete or disabled: '
+                    '%s') % ', '.join(bad))
+    return (applied[prefix + 'AuthenticationProtocol'],
+            applied[prefix + 'PrivacyProtocol'])
+
 
 _SET_NTP_ARGSINFO = {
     'ntp_servers': {
@@ -1226,6 +1271,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                   {'slot': slot, 'username': username,
                    'node': task.node.uuid})
 
+        # A failed reconfiguration must not leave an older protocol handoff.
+        _set_snmpv3_extra(task, None)
         # UserName and Password must exist before dependent account
         # attributes can be changed, including when provisioning an empty slot.
         drac_utils.set_dell_attributes(task, {
@@ -1237,6 +1284,22 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         drac_utils.set_dell_attributes(task, {
             prefix + 'EnableSNMPv3Passphrase': 'Enabled',
         }, target='iDRAC')
+
+        # Persist only observed, non-secret settings for monitoring clients.
+        applied_auth, applied_privacy = _read_snmpv3_user(
+            task, prefix, username)
+        if (applied_auth, applied_privacy) != (auth_protocol,
+                                               privacy_protocol):
+            LOG.warning('BMC applied SNMPv3 protocols %(applied)s differ '
+                        'from requested %(requested)s for node %(node)s',
+                        {'applied': (applied_auth, applied_privacy),
+                         'requested': (auth_protocol, privacy_protocol),
+                         'node': task.node.uuid})
+        _set_snmpv3_extra(task, {
+            'username': username,
+            'auth_protocol': applied_auth,
+            'privacy_protocol': applied_privacy,
+        })
 
         LOG.info('Configured SNMPv3 user slot %(slot)d (%(username)s) '
                  'for node %(node)s',
