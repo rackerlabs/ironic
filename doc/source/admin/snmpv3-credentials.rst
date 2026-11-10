@@ -121,6 +121,37 @@ the master out of command-line arguments. Access to the master permits
 deriving credentials for every node that uses it, so restrict access to
 trusted provisioning services.
 
+Applied protocol readback
+-------------------------
+
+After configuring the monitoring user, the Dell ``configure_snmpv3_user``
+step reads the applied iDRAC attributes and saves only the non-secret values
+in ``node.extra["snmpv3"]``:
+
+.. code-block:: json
+
+   {
+     "username": "uc-abc1234",
+     "auth_protocol": "SHA-384",
+     "privacy_protocol": "AES-256"
+   }
+
+These are the observed protocols, which may differ from the requested settings.
+The step verifies that the expected user and SNMPv3 access are enabled before
+saving the readback. It removes any previous handoff before changing the BMC,
+so a failed reconfiguration cannot leave older settings for consumers to use.
+Incomplete or disabled readback fails the step. No passphrases or BMC login
+credentials are stored in this metadata.
+
+The readback uses ``node.extra`` because it is intended for external consumers
+through the node API. ``driver_internal_info`` holds driver implementation
+state; monitoring integrations should not depend on that internal structure.
+Operators can edit ``node.extra``, so consumers must treat these values as a
+configuration hint, not proof of the BMC's current settings or successful
+authentication.
+
+Consumers can read these values through the existing Ironic node API
+
 Master lifecycle
 ----------------
 
