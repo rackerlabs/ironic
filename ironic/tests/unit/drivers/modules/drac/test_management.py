@@ -1326,6 +1326,18 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
 
     def _snmpv3_conf(self, master='test-master-key-0123456789abcdefgh',
                      username=None, service_tag='ABC1234'):
+        readback = mock.patch.object(drac_utils, 'get_dell_attributes',
+                                     autospec=True)
+        self.snmpv3_readback = readback.start()
+        self.addCleanup(readback.stop)
+
+        def applied_attributes(*args, **kwargs):
+            attributes = {}
+            for call in drac_utils.set_dell_attributes.call_args_list:
+                attributes.update(call.args[1])
+            return attributes
+
+        self.snmpv3_readback.side_effect = applied_attributes
         self.config(snmpv3_master_key=master, group='drac')
         self.config(snmpv3_username=username, group='drac')
         self.config(data_backend='database', group='inventory')
@@ -1335,6 +1347,66 @@ class DracRedfishManagementTestCase(test_utils.BaseDracTest):
                 inventory_data={
                     'system_vendor': {'serial_number': service_tag}},
                 plugin_data={})
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_records_observed_protocols_only(
+            self, mock_set):
+        self._snmpv3_conf(username='sl1-monitor')
+        self.snmpv3_readback.side_effect = None
+        self.snmpv3_readback.return_value = {
+            'Users.5.UserName': 'sl1-monitor',
+            'Users.5.Enable': 'Enabled',
+            'Users.5.ProtocolEnable': 'Enabled',
+            'Users.5.EnableSNMPv3Passphrase': 'Enabled',
+            'Users.5.AuthenticationProtocol': 'SHA-384',
+            'Users.5.PrivacyProtocol': 'AES-256',
+            'Users.5.SNMPv3AuthenticationPassphrase': 'must-not-be-saved',
+        }
+        self.node.extra = {'unrelated': 'preserved'}
+        self.node.save()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            self.management.configure_snmpv3_user(task, slot=5)
+            self.snmpv3_readback.assert_called_once_with(task, target='iDRAC')
+        self.node.refresh()
+        self.assertEqual({
+            'unrelated': 'preserved',
+            'snmpv3': {'username': 'sl1-monitor',
+                       'auth_protocol': 'SHA-384',
+                       'privacy_protocol': 'AES-256'},
+        }, self.node.extra)
+        # The BMC's readback, rather than the requested SHA/AES, is published.
+        self.assertEqual('SHA', mock_set.call_args_list[1].args[1][
+            'Users.5.AuthenticationProtocol'])
+
+    @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
+    def test_configure_snmpv3_user_failed_readback_clears_old_handoff(
+            self, mock_set):
+        self._snmpv3_conf(username='sl1-monitor')
+        self.snmpv3_readback.side_effect = None
+        applied = {
+            'Users.3.UserName': 'sl1-monitor',
+            'Users.3.Enable': 'Enabled',
+            'Users.3.ProtocolEnable': 'Enabled',
+            'Users.3.EnableSNMPv3Passphrase': 'Enabled',
+            'Users.3.AuthenticationProtocol': 'SHA-384',
+            'Users.3.PrivacyProtocol': 'AES-256',
+        }
+        for invalid in ({}, applied | {'Users.3.UserName': 'other-user'},
+                        applied | {'Users.3.Enable': 'Disabled'}):
+            with self.subTest(readback=invalid):
+                self.node.extra = {'unrelated': 'preserved', 'snmpv3': {
+                    'username': 'sl1-monitor', 'auth_protocol': 'SHA',
+                    'privacy_protocol': 'AES'}}
+                self.node.save()
+                self.snmpv3_readback.return_value = invalid
+                with task_manager.acquire(self.context, self.node.uuid,
+                                          shared=False) as task:
+                    self.assertRaises(exception.RedfishError,
+                                      self.management.configure_snmpv3_user,
+                                      task)
+                self.node.refresh()
+                self.assertEqual({'unrelated': 'preserved'}, self.node.extra)
 
     @mock.patch.object(drac_utils, 'set_dell_attributes', autospec=True)
     def test_configure_snmpv3_user_default_slot(self, mock_set_attrs):
