@@ -2241,7 +2241,10 @@ class SensorDataTestCase(db_base.DbTestCase):
             "reading_celsius": 62,
             "upper_threshold_non_critical": 75,
             "upper_threshold_critical": 90,
-            "upperThresholdFatal": 95,
+            "upper_threshold_fatal": 95,
+            "lower_threshold_non_critical": 5,
+            "lower_threshold_critical": 3,
+            "lower_threshold_fatal": 0,
             "min_reading_range_temp": 0,
             "max_reading_range_temp": 120,
             "physical_context": "CPU",
@@ -2263,11 +2266,18 @@ class SensorDataTestCase(db_base.DbTestCase):
         expected = {
             'XXX-YYY-ZZZ@ZZZ-YYY-XXX': {
                 'identity': 'XXX-YYY-ZZZ',
+                'name': 'CPU Temp',
                 'max_reading_range_temp': 120,
                 'min_reading_range_temp': 0,
                 'physical_context': 'CPU',
                 'reading_celsius': 62,
                 'sensor_number': 1,
+                'upper_threshold_non_critical': 75,
+                'upper_threshold_critical': 90,
+                'upper_threshold_fatal': 95,
+                'lower_threshold_non_critical': 5,
+                'lower_threshold_critical': 3,
+                'lower_threshold_fatal': 0,
                 'health': 'OK',
                 'state': 'enabled'
             }
@@ -2665,7 +2675,10 @@ class SensorDataTestCase(db_base.DbTestCase):
         mock_temp.name = "CPU Temp"
         mock_temp.upper_threshold_non_critical = 75
         mock_temp.upper_threshold_critical = 90
-        mock_temp.upperThresholdFatal = 95
+        mock_temp.upper_threshold_fatal = 95
+        mock_temp.lower_threshold_non_critical = 5
+        mock_temp.lower_threshold_critical = 3
+        mock_temp.lower_threshold_fatal = 0
         mock_temp.min_reading_range_temp = 0
         mock_temp.max_reading_range_temp = 120
         mock_temp.physical_context = "CPU"
@@ -2676,9 +2689,12 @@ class SensorDataTestCase(db_base.DbTestCase):
         mock_chassis.thermal.temperatures = [mock_temp]
 
         sensor = redfish_mgmt.RedfishManagement._sensor2dict(
-            mock_temp, 'identity', 'max_reading_range_temp',
+            mock_temp, 'identity', 'name', 'max_reading_range_temp',
             'min_reading_range_temp', 'reading_celsius',
-            'physical_context', 'sensor_number'
+            'physical_context', 'sensor_number',
+            'upper_threshold_non_critical', 'upper_threshold_critical',
+            'upper_threshold_fatal', 'lower_threshold_non_critical',
+            'lower_threshold_critical', 'lower_threshold_fatal'
         )
 
         sensor.update(redfish_mgmt.RedfishManagement._sensor2dict(
@@ -2690,6 +2706,13 @@ class SensorDataTestCase(db_base.DbTestCase):
         expected = {
             'XXX-YYY-ZZZ@ZZZ-YYY-XXX': {
                 'identity': 'XXX-YYY-ZZZ',
+                'name': 'CPU Temp',
+                'upper_threshold_non_critical': 75,
+                'upper_threshold_critical': 90,
+                'upper_threshold_fatal': 95,
+                'lower_threshold_non_critical': 5,
+                'lower_threshold_critical': 3,
+                'lower_threshold_fatal': 0,
                 'max_reading_range_temp': 120,
                 'min_reading_range_temp': 0,
                 'physical_context': 'CPU',
