@@ -27,6 +27,32 @@ specified, then this is equivalent to ``wait 0``, meaning that it will not
 wait and immediately proceed with the next firmware update if there is one,
 or complete the step if not.
 
+Firmware inventory
+------------------
+
+The Redfish firmware interface caches BIOS, BMC, NIC and additional components
+reported by ``UpdateService/FirmwareInventory``. List the cached inventory with::
+
+    openstack baremetal node firmware list <node>
+
+BIOS, BMC and NICs retain their existing component names. Additional components
+use ``firmware:<related resource URI>``. Each device gets its own row.
+For older Dell iDRAC systems without ``RelatedItem``, the device
+suffix following ``__`` in the inventory ID identifies the device instead.
+For example, a power supply uses ``firmware:PSU.Slot.1``.
+Entries without device information use the software ID for Current or Installed
+entries, or the inventory ID for generic entries. Identifiers exceeding
+255 characters use a truncated prefix and a SHA-256 digest of the full identifier.
+Previous and Available Dell entries are excluded. For duplicates, Current
+entries take precedence over Installed entries, followed by generic IDs.
+
+The inventory is refreshed during inspection, cleaning and after firmware
+updates. Rows for devices that are later removed are not deleted.
+Selectors do not include Redfish Name, which can contain firmware versions.
+They depend on device identifiers reported by the BMC. Use the
+exact component value from a refreshed inventory when constructing a runbook.
+Previously cached component names are not renamed or deleted automatically.
+
 How it works
 ------------
 
@@ -86,6 +112,20 @@ Each firmware image dictionary is of the form::
     "bmc", "The BMC firmware"
     "bios", "The BIOS firmware"
     "nic:<NIC_REDFISH_ID>", "Since machines can have multiple NICs, we use **nic:** as prefix plus the **NIC_REDFISH_ID** to identify the NIC to update"
+    "firmware:<device>", "An additional component copied from the firmware inventory, for example **firmware:PSU.Slot.1**"
+
+For ``firmware:`` components, the driver resolves the exact selector against
+fresh Redfish firmware inventory before staging the image. The component must
+identify one installed entry marked ``Updateable``. Missing, ambiguous and
+non-updateable components are rejected. Current entries take precedence over
+Installed entries, followed by generic IDs, as they do when listing inventory.
+
+The driver passes the selected ``RelatedItem`` URI as the ``SimpleUpdate``
+target. If the entry has no ``RelatedItem``, it uses the firmware inventory
+entry URI. The BMC must support updating that target through ``SimpleUpdate``;
+the driver does not retry an unsuccessful targeted update without a target.
+Additional components use the existing default monitoring and reboot handling.
+Existing BIOS, BMC and NIC update behavior is unchanged.
 
 The ``component`` and ``url`` arguments in the firmware image dictionary are
 mandatory, while the ``wait`` argument is optional.

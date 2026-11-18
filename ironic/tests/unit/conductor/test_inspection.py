@@ -26,7 +26,9 @@ from ironic.tests.unit.objects import utils as obj_utils
             autospec=True)
 class TestInspectHardware(db_base.DbTestCase):
 
-    def test_inspect_hardware_ok(self, mock_inspect):
+    @mock.patch('ironic.conductor.utils.node_cache_firmware_components',
+                autospec=True)
+    def test_inspect_hardware_ok(self, mock_cache_fw, mock_inspect):
         node = obj_utils.create_test_node(
             self.context, driver='fake-hardware',
             provision_state=states.INSPECTING,
@@ -40,9 +42,28 @@ class TestInspectHardware(db_base.DbTestCase):
         self.assertEqual(states.NOSTATE, node.target_provision_state)
         self.assertIsNone(node.last_error)
         mock_inspect.assert_called_once_with(task.driver.inspect, task)
+        mock_cache_fw.assert_called_once_with(task)
         task.node.refresh()
         self.assertNotIn('agent_url', task.node.driver_internal_info)
         self.assertNotIn('agent_secret_token', task.node.driver_internal_info)
+
+    @mock.patch('ironic.drivers.modules.fake.FakeFirmware.'
+                'cache_firmware_components', autospec=True)
+    def test_inspect_hardware_firmware_cache_failure(
+            self, mock_cache_fw, mock_inspect):
+        node = obj_utils.create_test_node(
+            self.context, driver='fake-hardware', firmware_interface='fake',
+            provision_state=states.INSPECTING)
+        task = task_manager.TaskManager(self.context, node.uuid)
+        mock_inspect.return_value = states.MANAGEABLE
+        mock_cache_fw.side_effect = RuntimeError('firmware cache failed')
+
+        inspection.inspect_hardware(task)
+
+        node.refresh()
+        self.assertEqual(states.MANAGEABLE, node.provision_state)
+        self.assertIsNone(node.last_error)
+        mock_cache_fw.assert_called_once_with(task.driver.firmware, task)
 
     def test_inspect_hardware_return_inspecting(self, mock_inspect):
         node = obj_utils.create_test_node(self.context, driver='fake-hardware',
@@ -58,7 +79,10 @@ class TestInspectHardware(db_base.DbTestCase):
         self.assertEqual(states.MANAGEABLE, node.target_provision_state)
         mock_inspect.assert_called_once_with(task.driver.inspect, task)
 
-    def test_inspect_hardware_return_inspect_wait(self, mock_inspect):
+    @mock.patch('ironic.conductor.utils.node_cache_firmware_components',
+                autospec=True)
+    def test_inspect_hardware_return_inspect_wait(
+            self, mock_cache_fw, mock_inspect):
         node = obj_utils.create_test_node(self.context, driver='fake-hardware',
                                           provision_state=states.INSPECTING)
         task = task_manager.TaskManager(self.context, node.uuid)
@@ -69,6 +93,7 @@ class TestInspectHardware(db_base.DbTestCase):
         self.assertEqual(states.MANAGEABLE, node.target_provision_state)
         self.assertIsNone(node.last_error)
         mock_inspect.assert_called_once_with(task.driver.inspect, task)
+        mock_cache_fw.assert_not_called()
 
     @mock.patch.object(inspection, 'LOG', autospec=True)
     def test_inspect_hardware_return_other_state(self, log_mock, mock_inspect):

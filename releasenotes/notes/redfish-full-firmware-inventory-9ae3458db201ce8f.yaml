@@ -1,0 +1,23 @@
+---
+features:
+  - |
+    The Redfish firmware interface now caches additional components from
+    UpdateService/FirmwareInventory, including storage controllers, drives,
+    power supplies and other firmware reported by the BMC. Related devices
+    are listed separately, including device IDs reported by older Dell iDRAC
+    systems. Existing BIOS, BMC and NIC component names are preserved.
+    Previous and uploaded Available Dell firmware entries are excluded;
+    generic inventory IDs are also supported. Long component identifiers
+    use a truncated prefix and a digest of the full identifier.
+    Additional component selectors use related resource URIs or device IDs,
+    excluding Redfish Name, which can contain firmware versions. Entries
+    without device information use SoftwareId for Current or Installed
+    entries, or the inventory ID for generic entries.
+    The firmware update step accepts these selectors, resolving
+    each against fresh inventory to one installed, updateable Redfish target.
+    Missing, ambiguous and non-updateable targets are rejected. Previously
+    cached component names are not renamed or deleted.
+fixes:
+  - |
+    Synchronous inspection now refreshes cached firmware components, matching
+    asynchronous inspection. This includes inspection with idrac-redfish.

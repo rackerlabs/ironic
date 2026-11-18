@@ -505,9 +505,19 @@ class FirmwareUtilsTestCase(base.TestCase):
             {
                 "component": "nic:DX00-9",
                 "url": "http://192.168.0.1/dx009.exe"
+            },
+            {
+                "component": "firmware:Power Supply:PSU.Slot.1",
+                "url": "http://192.168.0.1/psu.exe"
             }
         ]
         firmware_utils.validate_firmware_interface_update_args(settings)
+
+    def test_validate_firmware_interface_update_args_empty_selector(self):
+        self.assertRaises(
+            exception.InvalidParameterValue,
+            firmware_utils.validate_firmware_interface_update_args,
+            [{'component': 'firmware:', 'url': 'https://example.com/fw.exe'}])
 
     def test_validate_firmware_interface_update_args_not_list(self):
         settings = {
