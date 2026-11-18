@@ -53,6 +53,30 @@ They depend on device identifiers reported by the BMC. Use the
 exact component value from a refreshed inventory when constructing a runbook.
 Previously cached component names are not renamed or deleted automatically.
 
+Refreshing inventory on active nodes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the ``redfish`` firmware interface, refresh the cached inventory of an
+active node without inspection by running the ``cache_firmware_components``
+service step::
+
+    openstack --os-cloud iad3-dev baremetal node service <node> \
+      --disable-ramdisk --service-steps \
+      '[{"interface": "firmware", "step": "cache_firmware_components"}]'
+
+This step reads firmware versions from Redfish and updates Ironic's cached
+inventory, including PSU firmware when reported by the BMC. It does not install
+firmware, boot a ramdisk, or reboot the server. The node temporarily enters
+``servicing`` and returns to ``active`` after successful completion. Once it is
+active again, view the refreshed inventory::
+
+    openstack --os-cloud iad3-dev baremetal node firmware list <node>
+
+The step uses the existing inventory collection behavior: unavailable optional
+resources are logged and skipped, and old rows are not deleted. Check conductor
+logs if an expected component is missing. An unhandled collection error fails
+servicing and is reported in the node's ``last_error``.
+
 How it works
 ------------
 

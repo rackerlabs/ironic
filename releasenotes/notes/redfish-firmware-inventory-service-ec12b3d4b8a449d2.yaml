@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    The Redfish firmware interface now exposes ``cache_firmware_components``
+    as a service step. Operators can refresh firmware inventory on active
+    nodes using servicing with ``--disable-ramdisk``, without inspection,
+    rebooting the server, or installing firmware.
