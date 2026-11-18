@@ -105,6 +105,9 @@ BMC = 'bmc'
 NIC_COMPONENT_PREFIX = "nic:"
 "Prefix for NIC Firmware Components"
 
+FIRMWARE_COMPONENT_PREFIX = "firmware:"
+"Prefix for additional Firmware Components"
+
 NIC = "nic"
 "NIC Firmware Component type"
 
