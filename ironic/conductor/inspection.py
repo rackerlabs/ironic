@@ -64,6 +64,7 @@ def inspect_hardware(task):
         raise exception.HardwareInspectionFailure(error=error) from e
 
     if new_state == states.MANAGEABLE:
+        utils.node_cache_firmware_components(task)
         task.process_event('done')
         LOG.info('Successfully inspected node %(node)s',
                  {'node': node.uuid})

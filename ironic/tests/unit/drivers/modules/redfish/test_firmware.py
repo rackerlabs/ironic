@@ -16,6 +16,7 @@ import json
 import time
 from unittest import mock
 
+import fixtures
 from oslo_config import cfg
 from oslo_utils import timeutils
 import sushy
@@ -49,6 +50,19 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
                     enabled_firmware_interfaces=['redfish'])
         self.node = obj_utils.create_test_node(
             self.context, driver='redfish', driver_info=INFO_DICT)
+        self.update_service = mock.Mock()
+        self.useFixture(fixtures.MockPatchObject(
+            redfish_utils, 'get_update_service',
+            new=lambda node: self.update_service))
+        self.system = mock.Mock(bios=mock.Mock(
+            path='/redfish/v1/Systems/1/Bios'))
+        self.inventory = self.update_service.firmware_inventory
+        self._set_inventory_members([])
+
+    def _set_inventory_members(self, members):
+        self.inventory.get_members.return_value = members
+        self.inventory.members_identities = [m.identity for m in members]
+        self.inventory.json = {}
 
     def _mock_exc_fwup_side_effect(self, firmware_interface, node,
                                    update_service, settings_list):
@@ -98,6 +112,386 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
                                   shared=True) as task:
             task.driver.firmware.validate(task)
             mock_parse_driver_info.assert_called_once_with(task.node)
+
+    def _inventory_member(self, identity, software_id, version,
+                          related_items=(), name='Firmware'):
+        member = mock.Mock(
+            identity=identity, software_id=software_id, version=version,
+            related_item=[{'@odata.id': path} for path in related_items],
+            manufacturer=None, updateable=True,
+            path='/redfish/v1/UpdateService/FirmwareInventory/' + identity)
+        member.name = name
+        return member
+
+    def test_firmware_inventory_per_device(self):
+        psu1 = '/redfish/v1/Chassis/1/PowerSubsystem/PowerSupplies/1'
+        psu2 = '/redfish/v1/Chassis/1/PowerSubsystem/PowerSupplies/2'
+        drive1 = '/redfish/v1/Systems/1/Storage/BOSS/Drives/1'
+        drive2 = '/redfish/v1/Systems/1/Storage/BOSS/Drives/2'
+        self._set_inventory_members([
+            self._inventory_member('Installed-113590-AE46__PSU', '113590',
+                                   'AE46', [psu1, psu2]),
+            self._inventory_member('Installed-0-1.4.0__Drive', '0', '1.4.0',
+                                   [drive1]),
+            self._inventory_member('Installed-0-1.1.0__Drive', '0', '1.1.0',
+                                   [drive2]),
+            self._inventory_member('Installed-109673-7.2.4.1__TPM', '109673',
+                                   '7.2.4.1'),
+            self._inventory_member('Installed-115506-0__BootstrapOS',
+                                   '115506', '0'),
+        ])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = (
+                task.driver.firmware.retrieve_firmware_inventory(
+                    task, self.system, {}, []))
+        self.assertEqual({
+            'firmware:' + psu1: 'AE46',
+            'firmware:' + psu2: 'AE46',
+            'firmware:' + drive1: '1.4.0',
+            'firmware:' + drive2: '1.1.0',
+            'firmware:TPM': '7.2.4.1',
+            'firmware:BootstrapOS': '0',
+        }, {item['component']: item['current_version'] for item in components})
+
+    def test_firmware_inventory_current_precedence(self):
+        current = self._inventory_member('Current-123-2.0', '123', '2.0')
+        installed = self._inventory_member('Installed-123-1.0', '123', '1.0')
+        previous = self._inventory_member('Previous-456-0.5', '456', '0.5')
+        missing = self._inventory_member('Installed-789', '789', None)
+        for members in ([current, installed, previous, missing],
+                        [missing, previous, installed, current]):
+            with self.subTest(members=members):
+                self._set_inventory_members(members)
+                with task_manager.acquire(self.context,
+                                          self.node.uuid) as task:
+                    components = (
+                        task.driver.firmware.retrieve_firmware_inventory(
+                            task, self.system, {}, []))
+                self.assertEqual([{'component': 'firmware:123',
+                                   'current_version': '2.0', 'vendor': None}],
+                                 components)
+
+    def test_firmware_inventory_without_software_id(self):
+        self._set_inventory_members([
+            self._inventory_member('TPM', None, '7.2.4.1', name='TPM')])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = (
+                task.driver.firmware.retrieve_firmware_inventory(
+                    task, self.system, {}, []))
+        self.assertEqual('firmware:TPM', components[0]['component'])
+
+    def test_inventory_update_selector_survives_version_and_name_changes(self):
+        path = '/redfish/v1/Chassis/1/PowerSupplies/1'
+        for identity, paths, selector in (
+                ('Installed-123-1.0__PSU.Slot.1', [path], path),
+                ('Installed-123-1.0__PSU.Slot.1', [], 'PSU.Slot.1'),
+                ('Installed-123-1.0', [], '123'),
+                ('PSUFirmware', [], 'PSUFirmware')):
+            with self.subTest(identity=identity, paths=paths):
+                member = self._inventory_member(
+                    identity, '123', '1.0', paths,
+                    name='Power Supply Package 1.0')
+                self._set_inventory_members([member])
+                with task_manager.acquire(self.context,
+                                          self.node.uuid) as task:
+                    firmware = task.driver.firmware
+                    before = firmware.retrieve_firmware_inventory(
+                        task, self.system, {}, [])
+                    member.identity = identity.replace('1.0', '2.0')
+                    member.path = member.path.replace('1.0', '2.0')
+                    member.version = '2.0'
+                    member.name = 'Power Supply Package 2.0'
+                    after = firmware.retrieve_firmware_inventory(
+                        task, self.system, {}, [])
+                    component = 'firmware:' + selector
+                    self.assertEqual(component, before[0]['component'])
+                    self.assertEqual(component, after[0]['component'])
+                    self.assertEqual('2.0', after[0]['current_version'])
+                    self.assertEqual(
+                        path if paths else member.path,
+                        firmware._inventory_update_target(
+                            self.update_service, component))
+
+    @mock.patch.object(redfish_utils, 'get_system_collection', autospec=True)
+    def test_inventory_update_shared_device_target(self, collection_mock):
+        collection_mock.return_value.members_identities = ['/system/1']
+        self.update_service.simple_update.return_value.task_monitor_uri = (
+            '/redfish/v1/TaskService/TaskMonitors/1')
+        paths = ['/redfish/v1/Chassis/1/PowerSupplies/1',
+                 '/redfish/v1/Chassis/1/PowerSupplies/2']
+        self._set_inventory_members([
+            self._inventory_member('Current-123-1.0', '123', '1.0', paths,
+                                   name='Power Supply')])
+        firmware = redfish_fw.RedfishFirmware()
+        settings = {'component': 'firmware:' + paths[1],
+                    'url': 'https://example.com/psu.exe'}
+        with mock.patch.object(firmware, '_stage_firmware_file',
+                               autospec=True,
+                               return_value=(settings['url'], None)):
+            firmware._execute_firmware_update(
+                self.node, self.update_service, [settings])
+        self.update_service.simple_update.assert_called_once_with(
+            settings['url'], targets=[paths[1]])
+        self.inventory.refresh.assert_called_once_with(force=True)
+
+    def test_inventory_update_idrac9_target_and_precedence(self):
+        current = self._inventory_member(
+            'Current-108077-1.0__PSU.Slot.1', '108077', '1.0',
+            name='Power Supply')
+        self._set_inventory_members([
+            self._inventory_member(
+                'Installed-108077-0.9__PSU.Slot.1', '108077', '0.9',
+                name='Power Supply'),
+            current])
+        firmware = redfish_fw.RedfishFirmware()
+        target = firmware._inventory_update_target(
+            self.update_service, 'firmware:PSU.Slot.1')
+        self.assertEqual(current.path, target)
+
+    @mock.patch.object(redfish_utils, 'get_system_collection', autospec=True)
+    def test_inventory_update_rejects_invalid_targets(self, collection_mock):
+        collection_mock.return_value.members_identities = ['/system/1']
+        first = self._inventory_member('TPM1__TPM', '123', '1.0', name='TPM')
+        second = self._inventory_member('TPM2__TPM', '456', '1.0', name='TPM')
+        other_package = self._inventory_member(
+            'Current-456-1.0__TPM', '456', '1.0', name='TPM')
+        previous = self._inventory_member(
+            'Previous-123-1.0', '123', '1.0', name='TPM')
+        available = self._inventory_member(
+            'Available-123-1.0', '123', '1.0', name='TPM')
+        readonly = self._inventory_member('TPM', '123', '1.0', name='TPM')
+        readonly.updateable = False
+        firmware = redfish_fw.RedfishFirmware()
+        for members in ([], [first, second], [first, other_package],
+                        [previous], [available], [readonly]):
+            with self.subTest(members=members):
+                self._set_inventory_members(members)
+                with mock.patch.object(firmware, '_stage_firmware_file',
+                                       autospec=True) as stage_mock:
+                    self.assertRaises(
+                        exception.InvalidParameterValue,
+                        firmware._submit_simple_update, self.node,
+                        self.update_service,
+                        {'component': 'firmware:TPM',
+                         'url': 'https://example.com/tpm.exe'})
+                stage_mock.assert_not_called()
+        self.update_service.simple_update.assert_not_called()
+
+    @mock.patch.object(redfish_utils, 'get_system_collection', autospec=True)
+    def test_inventory_update_does_not_retry_without_target(
+            self, collection_mock):
+        collection_mock.return_value.members_identities = ['/system/1']
+        member = self._inventory_member('TPM', '123', '1.0', name='TPM')
+        self._set_inventory_members([member])
+        self.update_service.simple_update.side_effect = (
+            sushy.exceptions.SushyError())
+        firmware = redfish_fw.RedfishFirmware()
+        with mock.patch.object(firmware, '_stage_firmware_file', autospec=True,
+                               return_value=('https://example.com/fw', None)):
+            self.assertRaises(
+                sushy.exceptions.SushyError, firmware._submit_simple_update,
+                self.node, self.update_service,
+                {'component': 'firmware:TPM', 'url': 'https://example.com/fw'})
+        self.update_service.simple_update.assert_called_once_with(
+            'https://example.com/fw', targets=[member.path])
+
+    def test_inventory_update_long_selector(self):
+        path = '/redfish/v1/Systems/' + 'a' * 255 + '/Drives/1'
+        self._set_inventory_members([
+            self._inventory_member('Drive1', '123', '1.0', [path])])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            firmware = task.driver.firmware
+            components = firmware.retrieve_firmware_inventory(
+                task, self.system, {}, [])
+            target = firmware._inventory_update_target(
+                self.update_service, components[0]['component'])
+        self.assertEqual(path, target)
+
+    def test_firmware_inventory_installed_over_generic(self):
+        generic = self._inventory_member('TPM', '123', '1.0')
+        installed = self._inventory_member(
+            'Installed-123-2.0__TPM', '123', '2.0')
+        for members in ([generic, installed], [installed, generic]):
+            with self.subTest(members=members):
+                self._set_inventory_members(members)
+                with task_manager.acquire(self.context,
+                                          self.node.uuid) as task:
+                    components = (
+                        task.driver.firmware.retrieve_firmware_inventory(
+                            task, self.system, {}, []))
+                self.assertEqual([{'component': 'firmware:TPM',
+                                   'current_version': '2.0', 'vendor': None}],
+                                 components)
+
+    def test_firmware_inventory_dashed_adapter_ids(self):
+        names = {'NIC-1': 'nic:serial'}
+        for device in ('NIC-1', 'NIC-1-1'):
+            with self.subTest(device=device):
+                member = self._inventory_member(
+                    'Installed-123-1.0__' + device, '123', '1.0')
+                self.assertEqual(
+                    'nic:serial',
+                    redfish_fw.RedfishFirmware._inventory_component_name(
+                        member, None, {}, names))
+
+    def test_firmware_inventory_long_identifiers(self):
+        # The device suffix must distinguish paths sharing a long prefix.
+        prefix = '/redfish/v1/Systems/' + 'a' * 255
+        self._set_inventory_members([
+            self._inventory_member('Drive1', '123', '1.0', [prefix + '/1']),
+            self._inventory_member('Drive2', '123', '1.0', [prefix + '/2']),
+        ])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = task.driver.firmware.retrieve_firmware_inventory(
+                task, self.system, {}, [])
+            repeated = task.driver.firmware.retrieve_firmware_inventory(
+                task, self.system, {}, [])
+        names = {item['component'] for item in components}
+        self.assertEqual(2, len(names))
+        self.assertTrue(all(len(name) <= 255 for name in names))
+        self.assertTrue(all(name.startswith('firmware:')
+                            for name in names))
+        self.assertEqual(components, repeated)
+
+    def test_firmware_inventory_available_and_generic_ids(self):
+        path = '/redfish/v1/Chassis/1/PowerSubsystem/PowerSupplies/1'
+        self._set_inventory_members([
+            self._inventory_member('Available', '123', None),
+            self._inventory_member('Available-123-2.0__PSU', '123', '2.0',
+                                   [path]),
+            self._inventory_member('Available-456-3.0', '456', '3.0'),
+            self._inventory_member('PSUFirmware', '123', '1.0', [path]),
+        ])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = (
+                task.driver.firmware.retrieve_firmware_inventory(
+                    task, self.system, {}, []))
+        self.assertEqual([{'component': 'firmware:' + path,
+                           'current_version': '1.0', 'vendor': None}],
+                         components)
+
+    def test_firmware_inventory_idrac9_device_ids(self):
+        self._set_inventory_members([
+            self._inventory_member(
+                'Installed-104731-00.26.35__PSU.Slot.1', '104731', '00.26.35'),
+            self._inventory_member(
+                'Installed-104731-00.26.35__PSU.Slot.2', '104731', '00.26.35'),
+            self._inventory_member(
+                'Current-104731-00.26.36__PSU.Slot.1', '104731', '00.26.36'),
+            self._inventory_member(
+                'Previous-104731-00.26.34__PSU.Slot.2', '104731', '00.26.34'),
+            self._inventory_member(
+                'Installed-159-2.23.0__BIOS.Setup.1-1', '159', '2.23.0'),
+            self._inventory_member(
+                'Installed-25227-7.00.00.181__iDRAC.Embedded.1-1',
+                '25227', '7.00.00.181'),
+            self._inventory_member(
+                'Installed-0-22.71.11.13__NIC.Slot.1-1-1',
+                '0', '22.71.11.13'),
+            self._inventory_member(
+                'Installed-0-22.71.11.13__NIC.Slot.1-2-1',
+                '0', '22.71.11.13'),
+            self._inventory_member(
+                'Installed-0-227.1.115.0__NIC.Integrated.1-1',
+                '0', '227.1.115.0'),
+            self._inventory_member(
+                'Installed-0-227.1.115.0__NIC.Integrated.1-2',
+                '0', '227.1.115.0'),
+        ])
+        names = {
+            '/redfish/v1/Managers/iDRAC.Embedded.1': 'bmc',
+            '/redfish/v1/Chassis/1/NetworkAdapters/NIC.Slot.1': 'nic:serial',
+        }
+        existing = [{'component': name}
+                    for name in ('bios', 'bmc', 'nic:serial')]
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = (
+                task.driver.firmware.retrieve_firmware_inventory(
+                    task, self.system, names, existing))
+        self.assertEqual({
+            'firmware:PSU.Slot.1': '00.26.36',
+            'firmware:PSU.Slot.2': '00.26.35',
+            'firmware:NIC.Integrated.1-1': '227.1.115.0',
+            'firmware:NIC.Integrated.1-2': '227.1.115.0',
+        }, {item['component']: item['current_version'] for item in components})
+
+    def test_firmware_inventory_without_bios_resource(self):
+        self._set_inventory_members([
+            self._inventory_member('TPM', '123', '7.2.4.1')])
+        type(self.system).bios = mock.PropertyMock(
+            side_effect=sushy.exceptions.MissingAttributeError(
+                attribute='Bios', resource='System'))
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            components = (
+                task.driver.firmware.retrieve_firmware_inventory(
+                    task, self.system, {}, []))
+        self.assertEqual('firmware:TPM', components[0]['component'])
+
+    @mock.patch.object(redfish_utils, 'get_chassis', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_manager', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_cache_full_firmware_inventory(self, system_mock, manager_mock,
+                                           chassis_mock):
+        system = system_mock.return_value
+        system.bios_version = '1.8.5'
+        system.bios.path = '/redfish/v1/Systems/1/Bios'
+        manager = manager_mock.return_value
+        manager.path = '/redfish/v1/Managers/1'
+        manager.firmware_version = '1.30.60.52'
+        manager.model = 'iDRAC10'
+        adapter = mock.Mock(
+            path='/redfish/v1/Chassis/1/NetworkAdapters/1',
+            serial_number='VNFCBBA46701FT', manufacturer='NVIDIA',
+            model='ConnectX', controllers=[mock.Mock(
+                firmware_package_version='38.11.70.00')])
+        chassis_mock.return_value.network_adapters.get_members.return_value = [
+            adapter]
+        self._set_inventory_members([
+            self._inventory_member('Current-159-1.8.5__BIOS', '159', '1.8.5',
+                                   [system.bios.path]),
+            self._inventory_member('Current-113033-1.30.60.52__BMC', '113033',
+                                   '1.30.60.52', [manager.path]),
+            self._inventory_member('Current-113605-38.11.70.00__NIC.Slot',
+                                   '113605', '38.11.70.00', [adapter.path]),
+            self._inventory_member('Installed-109673-7.2.4.1__TPM', '109673',
+                                   '7.2.4.1'),
+        ])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            task.driver.firmware.cache_firmware_components(task)
+            rows = objects.FirmwareComponentList.get_by_node_id(
+                task.context, task.node.id)
+            self.assertEqual({'bios', 'bmc', 'nic:VNFCBBA46701FT',
+                              'firmware:TPM'},
+                             {row.component for row in rows})
+            # A new firmware version must update the same database row.
+            self.inventory.get_members.return_value[-1].version = '7.2.5'
+            task.driver.firmware.cache_firmware_components(task)
+            updated = objects.FirmwareComponent.get(
+                task.context, task.node.id, 'firmware:TPM')
+        self.assertEqual('7.2.4.1', updated.initial_version)
+        self.assertEqual('7.2.5', updated.current_version)
+        self.assertEqual('7.2.5', updated.last_version_flashed)
+        nic = next(row for row in rows if row.component.startswith('nic:'))
+        self.assertEqual('NVIDIA', nic.vendor)
+        self.assertEqual('ConnectX', nic.model)
+        self.assertEqual('VNFCBBA46701FT', nic.serial_number)
+
+    @mock.patch.object(redfish_utils, 'get_chassis', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_manager', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_cache_firmware_inventory_unavailable(self, system_mock,
+                                                  manager_mock, chassis_mock):
+        system_mock.return_value.bios_version = '1.8.5'
+        manager_mock.side_effect = exception.RedfishError(error='No manager')
+        chassis_mock.side_effect = exception.RedfishError(error='No chassis')
+        self.inventory.get_members.side_effect = (
+            sushy.exceptions.MissingAttributeError(
+                attribute='FirmwareInventory', resource='UpdateService'))
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            task.driver.firmware.cache_firmware_components(task)
+            rows = objects.FirmwareComponentList.get_by_node_id(
+                task.context, task.node.id)
+        self.assertEqual(['bios'], [row.component for row in rows])
 
     @mock.patch.object(redfish_fw, 'LOG', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -278,7 +672,7 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
             task.driver.firmware.cache_firmware_components(task)
 
             log_mock.warning.assert_not_called()
-            log_mock.debug.assert_called_once_with(
+            log_mock.debug.assert_any_call(
                 'Using Identity %(identity)s for '
                 'NetworkAdapter %(net_adp_id)s',
                 {'identity': 'NIC1', 'net_adp_id': 'NIC1'})

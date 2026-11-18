@@ -80,7 +80,9 @@ _FIRMWARE_INTERFACE_UPDATE_SCHEMA = {
                 "type": "string",
                 "anyOf": [
                     {"enum": redfish_utils.FIRMWARE_COMPONENTS},
-                    {"pattern": "^%s.*" % redfish_utils.NIC_COMPONENT_PREFIX}
+                    {"pattern": "^%s.*" % redfish_utils.NIC_COMPONENT_PREFIX},
+                    {"pattern": "^%s.+"
+                     % redfish_utils.FIRMWARE_COMPONENT_PREFIX}
                 ]
             },
             "url": {

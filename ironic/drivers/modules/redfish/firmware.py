@@ -11,6 +11,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import hashlib
 import time
 from urllib.parse import urlparse
 
@@ -91,8 +92,7 @@ class RedfishFirmware(base.FirmwareInterface):
 
         node_id = task.node.id
         settings = []
-        # NOTE(iurygregory): currently we will only retrieve BIOS and BMC
-        # firmware information through the redfish system and manager.
+        component_names = {}
 
         system = redfish_utils.get_system(task.node)
 
@@ -111,6 +111,7 @@ class RedfishFirmware(base.FirmwareInterface):
         # access the Manager.
         try:
             manager = redfish_utils.get_manager(task.node, system)
+            component_names[manager.path] = redfish_utils.BMC
             if manager.firmware_version:
                 bmc_fw = {'component': redfish_utils.BMC,
                           'current_version': manager.firmware_version,
@@ -129,7 +130,8 @@ class RedfishFirmware(base.FirmwareInterface):
 
         nic_components = None
         try:
-            nic_components = self.retrieve_nic_components(task, system)
+            nic_components = self.retrieve_nic_components(
+                task, system, component_names)
         except (exception.RedfishError,
                 sushy.exceptions.BadRequestError,
                 sushy.exceptions.MissingAttributeError) as e:
@@ -148,6 +150,14 @@ class RedfishFirmware(base.FirmwareInterface):
                       {'node_uuid': task.node.uuid})
         elif nic_components:
             settings.extend(nic_components)
+
+        try:
+            settings.extend(self.retrieve_firmware_inventory(
+                task, system, component_names, settings))
+        except (exception.RedfishError, sushy.exceptions.SushyError) as e:
+            LOG.warning('Unable to access FirmwareInventory on node '
+                        '%(node_uuid)s, Error: %(error)s',
+                        {'node_uuid': task.node.uuid, 'error': e})
 
         if not settings:
             error_msg = (_('Cannot retrieve firmware for node %s: no '
@@ -187,11 +197,112 @@ class RedfishFirmware(base.FirmwareInterface):
                 up_fw_cmp.serial_number = up_fw.get('serial_number')
                 up_fw_cmp.save()
 
-    def retrieve_nic_components(self, task, system):
+    @staticmethod
+    def _inventory_component_name(member, path, names, names_by_id):
+        """Return a bounded selector from the inventory device identifier."""
+        device = member.identity
+        if device.startswith(('Current-', 'Installed-')):
+            device = member.software_id or device
+        if path:
+            if path in names:
+                return names[path]
+            device = path
+        elif '__' in member.identity:
+            # Older iDRACs name the device in Id, e.g. NIC.Slot.1-1-1.
+            device = member.identity.split('__', 1)[1]
+            if device.split('.', 1)[0].lower() == redfish_utils.BIOS:
+                return redfish_utils.BIOS
+            if device in names_by_id:
+                return names_by_id[device]
+            for resource_id, component in names_by_id.items():
+                if device.startswith(resource_id + '-'):
+                    return component
+        name = redfish_utils.FIRMWARE_COMPONENT_PREFIX + device
+        if len(name) > 255:
+            digest = hashlib.sha256(name.encode('utf-8')).hexdigest()
+            name = '%s:%s' % (name[:255 - len(digest) - 1], digest)
+        return name
+
+    @staticmethod
+    def _inventory_priority(member):
+        return (not member.identity.startswith('Current-'),
+                not member.identity.startswith('Installed-'))
+
+    @staticmethod
+    def _installed_inventory_members(update_service):
+        # Previous and uploaded Available entries are not installed firmware.
+        return sorted(
+            (m for m in update_service.firmware_inventory.get_members()
+             if m.version and not m.identity.startswith(
+                 ('Previous-', 'Available'))),
+            key=RedfishFirmware._inventory_priority)
+
+    def retrieve_firmware_inventory(self, task, system, component_names,
+                                    settings):
+        """Retrieve firmware, excluding Previous and Available entries.
+
+        Existing BIOS, BMC and NIC names take precedence. Other components
+        are named from device identifiers, independently of Redfish Name.
+
+        :returns: a list of components
+        """
+        members = self._installed_inventory_members(
+            redfish_utils.get_update_service(task.node))
+        try:
+            component_names[system.bios.path] = redfish_utils.BIOS
+        except sushy.exceptions.SushyError:
+            LOG.debug('No BIOS resource available for node %s', task.node.uuid)
+
+        names_by_id = {path.rsplit('/', 1)[-1]: name
+                       for path, name in component_names.items()}
+        existing = {item['component'] for item in settings}
+        found = {}
+        for member in members:
+            for related in member.related_item or [{}]:
+                name = self._inventory_component_name(
+                    member, related.get('@odata.id'), component_names,
+                    names_by_id)
+                if name not in existing:
+                    found.setdefault(name, {
+                        'component': name,
+                        'current_version': member.version,
+                        'vendor': member.manufacturer,
+                    })
+        return list(found.values())
+
+    def _inventory_update_target(self, update_service, component):
+        """Resolve a device selector to an installed, updateable target."""
+        update_service.firmware_inventory.refresh(force=True)
+        matches = {}
+        for member in self._installed_inventory_members(update_service):
+            for related in member.related_item or [{}]:
+                path = related.get('@odata.id')
+                if self._inventory_component_name(
+                        member, path, {}, {}) == component:
+                    priority = self._inventory_priority(member)
+                    matches.setdefault(priority, []).append((member, path))
+        preferred = matches[min(matches)] if matches else []
+        software_ids = {member.software_id for group in matches.values()
+                        for member, path in group}
+        if len(preferred) != 1 or len(software_ids) > 1:
+            raise exception.InvalidParameterValue(
+                _('Firmware component %s must identify exactly one installed '
+                  'firmware target.') % component)
+        member, path = preferred[0]
+        if not member.updateable:
+            raise exception.InvalidParameterValue(
+                _('Firmware component %s is not updateable.') % component)
+        # A shared SoftwareInventory entry can cover several devices. Target
+        # the selected RelatedItem, or the inventory entry when it has none.
+        return path or member.path
+
+    def retrieve_nic_components(self, task, system, component_names):
         """Helper function to retrieve all NICs components on a given node.
 
         :param task: a TaskManager instance.
         :param system: a Redfish System object
+        :param component_names: mapping of resource URIs to component names,
+            populated with the NICs retrieved here
         :returns: a list of NIC components
         """
         nic_list = []
@@ -246,6 +357,7 @@ class RedfishFirmware(base.FirmwareInterface):
                     'serial_number': net_adp.serial_number,
                 }
                 nic_list.append(net_adp_fw)
+                component_names[net_adp.path] = net_adp_fw['component']
 
         return nic_list
 
@@ -671,6 +783,11 @@ class RedfishFirmware(base.FirmwareInterface):
             targets = [target]
         else:
             targets = None
+
+        if fw_upd['component'].startswith(
+                redfish_utils.FIRMWARE_COMPONENT_PREFIX):
+            targets = [self._inventory_update_target(
+                update_service, fw_upd['component'])]
 
         component_url, cleanup = self._stage_firmware_file(node, fw_upd)
 
