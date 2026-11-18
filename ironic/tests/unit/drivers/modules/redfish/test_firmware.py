@@ -479,6 +479,50 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
     @mock.patch.object(redfish_utils, 'get_chassis', autospec=True)
     @mock.patch.object(redfish_utils, 'get_manager', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_cache_firmware_service_step(self, system_mock, manager_mock,
+                                         chassis_mock):
+        self.node.provision_state = states.SERVICING
+        self.node.target_provision_state = states.ACTIVE
+        self.node.save()
+        system_mock.return_value.bios_version = '1.8.5'
+        system_mock.return_value.bios.path = '/redfish/v1/Systems/1/Bios'
+        manager_mock.return_value.firmware_version = None
+        manager_mock.return_value.path = '/redfish/v1/Managers/1'
+        chassis_mock.return_value.network_adapters.get_members.return_value = []
+        self._set_inventory_members([
+            self._inventory_member('Installed-108077-00.1B.53__PSU.Slot.1',
+                                   '108077', '00.1B.53')])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            step = next(step for step in
+                        task.driver.firmware.get_service_steps(task)
+                        if step['step'] == 'cache_firmware_components')
+            self.assertFalse(step['requires_ramdisk'])
+            self.assertIsNone(
+                task.driver.firmware.execute_service_step(task, step))
+            psu = objects.FirmwareComponent.get(
+                task.context, task.node.id, 'firmware:PSU.Slot.1')
+            self.assertEqual('00.1B.53', psu.current_version)
+            self.inventory.get_members.return_value[0].version = '00.1B.54'
+            task.driver.firmware.execute_service_step(task, step)
+            psu = objects.FirmwareComponent.get(
+                task.context, task.node.id, 'firmware:PSU.Slot.1')
+            self.assertEqual('00.1B.54', psu.current_version)
+            self.assertEqual(states.SERVICING, task.node.provision_state)
+            self.assertEqual(states.ACTIVE, task.node.target_provision_state)
+        self.update_service.simple_update.assert_not_called()
+
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_cache_firmware_service_step_failure(self, system_mock):
+        system_mock.side_effect = exception.RedfishError(error='Unavailable')
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            self.assertRaises(
+                exception.RedfishError,
+                task.driver.firmware.execute_service_step, task,
+                {'interface': 'firmware', 'step': 'cache_firmware_components'})
+
+    @mock.patch.object(redfish_utils, 'get_chassis', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_manager', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_cache_firmware_inventory_unavailable(self, system_mock,
                                                   manager_mock, chassis_mock):
         system_mock.return_value.bios_version = '1.8.5'

@@ -53,6 +53,30 @@ They depend on device identifiers reported by the BMC. Use the
 exact component value from a refreshed inventory when constructing a runbook.
 Previously cached component names are not renamed or deleted automatically.
 
+Refreshing inventory on active nodes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the ``redfish`` firmware interface, refresh the cached inventory of an
+active node without inspection by running the ``cache_firmware_components``
+service step::
+
+    openstack --os-cloud iad3-dev baremetal node service <node> \
+      --disable-ramdisk --service-steps \
+      '[{"interface": "firmware", "step": "cache_firmware_components"}]'
+
+This step reads firmware versions from Redfish and updates Ironic's cached
+inventory, including PSU firmware when reported by the BMC. It does not install
+firmware, boot a ramdisk, or reboot the server. The node temporarily enters
+``servicing`` and returns to ``active`` after successful completion. Once it is
+active again, view the refreshed inventory::
+
+    openstack --os-cloud iad3-dev baremetal node firmware list <node>
+
+The step uses the existing inventory collection behavior: unavailable optional
+resources are logged and skipped, and old rows are not deleted. Check conductor
+logs if an expected component is missing. An unhandled collection error fails
+servicing and is reported in the node's ``last_error``.
+
 How it works
 ------------
 
@@ -119,6 +143,9 @@ fresh Redfish firmware inventory before staging the image. The component must
 identify one installed entry marked ``Updateable``. Missing, ambiguous and
 non-updateable components are rejected. Current entries take precedence over
 Installed entries, followed by generic IDs, as they do when listing inventory.
+Shared firmware inventory entries covering multiple devices are supported
+when the selector identifies one device. Matching entries with different
+software IDs are rejected as ambiguous, even across priority levels.
 
 The driver passes the selected ``RelatedItem`` URI as the ``SimpleUpdate``
 target. If the entry has no ``RelatedItem``, it uses the firmware inventory
@@ -126,6 +153,56 @@ entry URI. The BMC must support updating that target through ``SimpleUpdate``;
 the driver does not retry an unsuccessful targeted update without a target.
 Additional components use the existing default monitoring and reboot handling.
 Existing BIOS, BMC and NIC update behavior is unchanged.
+
+Monitoring depends on the selector prefix. All ``firmware:`` selectors use
+generic task monitoring and reboot handling, including selectors such as
+``firmware:NIC.Integrated.1-1``. They do not use the specialized NIC handling
+provided by ``nic:`` selectors. For BIOS, BMC and NIC updates, use the listed
+``bios``, ``bmc`` or ``nic:`` selector when available. If only a ``firmware:``
+selector is listed for a device, validate its update and reboot behavior on a
+test node before using it in production runbooks.
+
+For example, suppose the inventory lists both of these selectors for the same
+physical NIC::
+
+    nic:NIC.Embedded.1
+    firmware:NIC.Embedded.2-1-1
+
+Use the ``nic:`` selector in the runbook's update settings to retain specialized
+NIC monitoring and reboot handling::
+
+    [{"component": "nic:NIC.Embedded.1",
+      "url": "https://firmware.example.com/nic-update.exe"}]
+
+Using the following settings instead selects the firmware inventory target
+and uses generic monitoring and reboot handling::
+
+    [{"component": "firmware:NIC.Embedded.2-1-1",
+      "url": "https://firmware.example.com/nic-update.exe"}]
+
+The names alone do not prove that two selectors refer to the same physical
+NIC. Confirm the device mapping in the BMC inventory before choosing between
+them. If only the ``firmware:`` selector is listed, validate that update path
+on a test node first.
+
+For example, a runbook's firmware update step can use the following ``settings``
+when the refreshed inventory lists ``firmware:PSU.Slot.1``::
+
+    [{"component": "firmware:PSU.Slot.1",
+      "url": "https://firmware.example.com/psu-update.exe"}]
+
+This selects PSU slot 1, including when one firmware inventory entry covers
+both PSU slots. If multiple matches remain at the preferred priority, or
+matching entries report different software IDs, the update step fails with::
+
+    Firmware component firmware:PSU.Slot.1 must identify exactly one installed firmware target.
+
+The image for that component is not staged or submitted to the BMC. The runbook
+stops at the failed step; previously completed updates are not rolled back.
+Before retrying, refresh and list the node's firmware inventory, confirm the
+exact component selector, and check the BMC's installed firmware inventory for
+conflicting entries. Correct the selector or resolve the BMC inventory conflict
+before retrying; changing the image URL does not resolve an ambiguous selector.
 
 The ``component`` and ``url`` arguments in the firmware image dictionary are
 mandatory, while the ``wait`` argument is optional.
