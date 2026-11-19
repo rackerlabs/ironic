@@ -198,8 +198,31 @@ class RedfishFirmware(base.FirmwareInterface):
                 up_fw_cmp.serial_number = up_fw.get('serial_number')
                 up_fw_cmp.save()
 
+    @classmethod
+    def _inventory_path_ids(cls, members):
+        """Shorten resource paths only when their device IDs are distinct."""
+        paths_by_id = {}
+        pathless_names = set()
+        for member in members:
+            for related in member.related_item or [{}]:
+                path = related.get('@odata.id')
+                if path:
+                    device = path.rstrip('/').rsplit('/', 1)[-1]
+                    paths_by_id.setdefault(device, set()).add(path)
+                else:
+                    pathless_names.add(cls._inventory_component_name(
+                        member, None, {}, {}, {}))
+        return {
+            path: device if (
+                len(paths) == 1 and not device.isdecimal()
+                and redfish_utils.FIRMWARE_COMPONENT_PREFIX + device
+                not in pathless_names
+            ) else path
+            for device, paths in paths_by_id.items() for path in paths}
+
     @staticmethod
-    def _inventory_component_name(member, path, names, names_by_id):
+    def _inventory_component_name(member, path, names, names_by_id,
+                                  device_ids):
         """Return a bounded selector from the inventory device identifier."""
         device = member.identity
         if device.startswith(('Current-', 'Installed-')):
@@ -207,7 +230,7 @@ class RedfishFirmware(base.FirmwareInterface):
         if path:
             if path in names:
                 return names[path]
-            device = path
+            device = device_ids[path]
         elif '__' in member.identity:
             # Older iDRACs name the device in Id, e.g. NIC.Slot.1-1-1.
             device = member.identity.split('__', 1)[1]
@@ -256,13 +279,14 @@ class RedfishFirmware(base.FirmwareInterface):
 
         names_by_id = {path.rsplit('/', 1)[-1]: name
                        for path, name in component_names.items()}
+        device_ids = self._inventory_path_ids(members)
         existing = {item['component'] for item in settings}
         found = {}
         for member in members:
             for related in member.related_item or [{}]:
                 name = self._inventory_component_name(
                     member, related.get('@odata.id'), component_names,
-                    names_by_id)
+                    names_by_id, device_ids)
                 if name not in existing:
                     found.setdefault(name, {
                         'component': name,
@@ -274,18 +298,39 @@ class RedfishFirmware(base.FirmwareInterface):
     def _inventory_update_target(self, update_service, component):
         """Resolve a device selector to an installed, updateable target."""
         update_service.firmware_inventory.refresh(force=True)
+        members = self._installed_inventory_members(update_service)
+        device_ids = self._inventory_path_ids(members)
         matches = {}
-        for member in self._installed_inventory_members(update_service):
+        for member in members:
             for related in member.related_item or [{}]:
                 path = related.get('@odata.id')
-                if self._inventory_component_name(
-                        member, path, {}, {}) == component:
+                selectors = {
+                    self._inventory_component_name(
+                        member, path, {}, {}, device_ids),
+                    redfish_utils.FIRMWARE_COMPONENT_PREFIX
+                    + (path or member.path),
+                }
+                if path:
+                    device = path.rstrip('/').rsplit('/', 1)[-1]
+                    if not device.isdecimal():
+                        selectors.add(
+                            redfish_utils.FIRMWARE_COMPONENT_PREFIX + device)
+                if component in selectors:
                     priority = self._inventory_priority(member)
                     matches.setdefault(priority, []).append((member, path))
         preferred = matches[min(matches)] if matches else []
         software_ids = {member.software_id for group in matches.values()
                         for member, path in group}
-        if len(preferred) != 1 or len(software_ids) > 1:
+        paths = {path for group in matches.values() for member, path in group}
+        if len(paths) > 1 or len(preferred) > 1 or len(software_ids) > 1:
+            selectors = sorted({
+                redfish_utils.FIRMWARE_COMPONENT_PREFIX + (path or member.path)
+                for group in matches.values() for member, path in group})
+            raise exception.InvalidParameterValue(
+                _('Firmware component %(component)s is ambiguous. Use a full '
+                  'Redfish URI selector: %(selectors)s')
+                % {'component': component, 'selectors': ', '.join(selectors)})
+        if not preferred:
             raise exception.InvalidParameterValue(
                 _('Firmware component %s must identify exactly one installed '
                   'firmware target.') % component)

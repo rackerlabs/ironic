@@ -9,7 +9,8 @@ features:
     Previous and uploaded Available Dell firmware entries are excluded;
     generic inventory IDs are also supported. Long component identifiers
     use a truncated prefix and a digest of the full identifier.
-    Additional component selectors use related resource URIs or device IDs,
+    Additional component selectors use device IDs from related resource URIs,
+    retaining full URIs for numeric IDs or IDs shared by multiple resources,
     excluding Redfish Name, which can contain firmware versions. Entries
     without device information use SoftwareId for Current or Installed
     entries, or the inventory ID for generic entries.
@@ -17,6 +18,11 @@ features:
     each against fresh inventory to one installed, updateable Redfish target.
     Missing, ambiguous and non-updateable targets are rejected. Previously
     cached component names are not renamed or deleted.
+    Short device selectors work across older and newer iDRAC inventories when
+    they identify one device. Collisions with other related resources or entries
+    without RelatedItem are rejected regardless of Current/Installed precedence.
+    Full related-resource or FirmwareInventory entry URIs can be used to select
+    devices explicitly, including when inventory displays short selectors.
 fixes:
   - |
     Synchronous inspection now refreshes cached firmware components, matching
