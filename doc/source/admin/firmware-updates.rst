@@ -36,7 +36,11 @@ reported by ``UpdateService/FirmwareInventory``. List the cached inventory with:
     openstack baremetal node firmware list <node>
 
 BIOS, BMC and NICs retain their existing component names. Additional components
-use ``firmware:<related resource URI>``. Each device gets its own row.
+use ``firmware:<device ID>``, taking the final segment of the related resource
+URI, for example ``firmware:PSU.Slot.3``. Numeric IDs, IDs shared by multiple
+resource paths, and IDs that collide with selectors from entries without
+``RelatedItem`` retain the full URI to keep devices distinct. The full URI is
+always retained for update targeting. Each device gets its own row.
 For older Dell iDRAC systems without ``RelatedItem``, the device
 suffix following ``__`` in the inventory ID identifies the device instead.
 For example, a power supply uses ``firmware:PSU.Slot.1``.
@@ -51,7 +55,268 @@ updates. Rows for devices that are later removed are not deleted.
 Selectors do not include Redfish Name, which can contain firmware versions.
 They depend on device identifiers reported by the BMC. Use the
 exact component value from a refreshed inventory when constructing a runbook.
+If a newly discovered resource or entry without ``RelatedItem`` collides with
+an existing short selector, affected resources with ``RelatedItem`` use full-URI
+selectors. The old short selector is rejected as ambiguous while the collision
+exists; it does not select the entry without ``RelatedItem`` instead.
 Previously cached component names are not renamed or deleted automatically.
+
+Writing and running a firmware runbook
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Refresh the node's inventory as described in
+`Refreshing inventory on active nodes`_, then list its components::
+
+    openstack baremetal node firmware list <node>
+
+Copy the intended device's ``component`` value into ``args.settings`` in your
+runbook. For example, this step selects PSU slot 1:
+
+.. code-block:: yaml
+
+    - interface: firmware
+      step: update
+      order: 1
+      args:
+        settings:
+          - component: firmware:PSU.Slot.1
+            url: https://example.com/psu.exe
+
+You can reuse this step on iDRAC9 and iDRAC10 servers when
+``firmware:PSU.Slot.1`` identifies one PSU on each server. You do not need
+separate selectors for the two generations. Check the intended device and
+firmware image compatibility on every hardware type covered by the runbook.
+
+A full-URI selector has the form ``firmware:<full Redfish URI>``. Use the
+device's ``RelatedItem`` URI when present, or its FirmwareInventory entry URI
+otherwise. The examples below show what to put in your runbook and what to
+expect when you execute it. Each update checks live inventory, even if the
+runbook was written using an older inventory listing.
+
+1. **You want one runbook for iDRAC9 and iDRAC10 servers.**
+
+   You want to update PSU slot 1 on both generations. On iDRAC9, the PSU is
+   identified by an inventory ID ending in ``__PSU.Slot.1``. On iDRAC10, its
+   related URI ends in ``/PSU.Slot.1``.
+
+   Put ``firmware:PSU.Slot.1`` in the runbook. When you execute it on either
+   server, it selects that PSU, provided the ID identifies one device there.
+   You do not need a separate runbook just because the iDRAC generation differs.
+
+   For example, these two servers use the same saved setting::
+
+       Runbook component: firmware:PSU.Slot.1
+       Run on iDRAC9:     selects PSU slot 1
+       Run on iDRAC10:    selects PSU slot 1
+
+   Before using it across a group of servers, check that each server has one
+   matching PSU and that the image supports each server's hardware.
+
+2. **You want to update only one of two PSUs.**
+
+   Your server has two PSUs. Inventory lists them separately::
+
+       firmware:PSU.Slot.1
+       firmware:PSU.Slot.2
+
+   To update only slot 1, write this under the update step's ``args``:
+
+   .. code-block:: yaml
+
+       settings:
+         - component: firmware:PSU.Slot.1
+           url: https://example.com/psu.exe
+
+   When you execute the runbook, this setting targets slot 1. Slot 2 is not
+   selected by this setting, even if both PSUs use the same firmware image.
+   The short selector identifies a particular slot; it does not mean "all
+   PSUs" or "any PSU that accepts this image".
+
+   To update both slots, list both explicitly:
+
+   .. code-block:: yaml
+
+       settings:
+         - component: firmware:PSU.Slot.1
+           url: https://example.com/psu.exe
+         - component: firmware:PSU.Slot.2
+           url: https://example.com/psu.exe
+
+   Execution processes the settings in order: slot 1, then slot 2. Use the
+   same image URL only when it is appropriate for both PSUs. After execution,
+   check the reported version for each slot you intended to update.
+
+3. **Two chassis have a PSU with the same device ID.**
+
+   You want the PSU in chassis 1, but both chassis report ``PSU.Slot.1``::
+
+       /redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1
+       /redfish/v1/Chassis/2/PowerSupplies/PSU.Slot.1
+
+   Using ``firmware:PSU.Slot.1`` fails because it matches both PSUs. To select
+   the first PSU, put this explicit selector in the runbook::
+
+       firmware:/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1
+
+   Check that this URI identifies the intended PSU on every node where you
+   plan to execute that runbook.
+
+   Executing the corrected setting targets only chassis 1's PSU. To update
+   chassis 2's PSU as well, add a separate setting with its full URI. Keeping
+   the short selector and retrying cannot tell Ironic which chassis you mean.
+
+4. **Two controllers share an ID but report it differently.**
+
+   You want controller A, whose related URI is
+   ``/redfish/v1/Systems/1/Controllers/RAID``.
+   Controller B also identifies itself as ``RAID``, but has no ``RelatedItem``.
+
+   A runbook using ``firmware:RAID`` fails as ambiguous. It does not select B
+   just because B still appears under the short name in cached inventory.
+   The error lists explicit selectors for both controllers. Identify A's
+   related URI in that list and use its full selector for this update. To
+   select B instead, use its FirmwareInventory entry URI from the error.
+
+   For example, if B's entry URI is
+   ``/redfish/v1/UpdateService/FirmwareInventory/RAID``, the choices are::
+
+       A: firmware:/redfish/v1/Systems/1/Controllers/RAID
+       B: firmware:/redfish/v1/UpdateService/FirmwareInventory/RAID
+
+   Put the selector for the controller you intend to update in ``component``.
+   Executing that setting selects that controller. You do not need to make
+   both controllers report their identity in the same format.
+
+5. **A collision appears after you wrote the runbook.**
+
+   When you write the runbook, only controller A has device ID ``RAID``.
+   You save ``firmware:RAID`` in ``args.settings`` and successfully update A.
+
+   Later, another inventory entry, B, is discovered with the same ID. You
+   have not edited the saved runbook: it still contains ``firmware:RAID``.
+
+   On the next execution, that selector matches both A and B. The update is
+   rejected as ambiguous before its image is staged or submitted. Ironic does
+   not silently change the target from A to B, and rerunning the unchanged
+   runbook while both entries remain will fail again.
+
+   Read the explicit selectors in the error, identify A, and use A's full-URI
+   selector in a runbook for the affected node or hardware group. If other
+   nodes share the original runbook, check them before changing its selector.
+
+   For example, if A's URI is
+   ``/redfish/v1/Systems/1/Controllers/RAID``, the change is::
+
+       Saved component:     firmware:RAID
+       Corrected component: firmware:/redfish/v1/Systems/1/Controllers/RAID
+
+   The corrected setting selects A even while B remains present. Use B's
+   explicit selector instead only if you intend to update B.
+
+6. **A conflicting device disappears after you saved a full URI.**
+
+   A and B share ID ``RAID``, so you save A's full-URI selector in the runbook::
+
+       firmware:/redfish/v1/Systems/1/Controllers/RAID
+
+   Later, B disappears. A is now the only matching device, and refreshed
+   inventory shows it as ``firmware:RAID``.
+
+   Execute the saved runbook without changing its full URI. It still selects A
+   while A remains installed and updateable at that URI. You do not need to
+   replace the saved selector just because the displayed name became shorter.
+   A runbook using the short selector would also work again while A is the
+   only match.
+
+   The displayed component name changed; your intended controller and its
+   URI did not. Keep the existing full selector and verify A's reported
+   version after the run.
+
+7. **You prefer a full URI even when inventory shows a short name.**
+
+   Inventory shows ``firmware:PSU.Slot.1`` for a PSU whose related URI is
+   ``/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1``. You can put either of
+   these selectors in the runbook::
+
+       firmware:PSU.Slot.1
+       firmware:/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1
+
+   Choose one of these values for ``component``; you do not need settings for
+   both. Either setting selects the same PSU when executed on that node.
+
+   Keeping the short selector lets you share the runbook with servers that
+   use another URI for the same unique slot ID. Keeping the full URI names
+   that particular resource explicitly. Before sharing the full-URI version,
+   check that URI on the other target nodes. You do not need to wait for a
+   naming collision before using a full URI.
+
+8. **Current and Installed entries describe the same PSU.**
+
+   You see inventory entries such as ``Current-123-2.0__PSU.Slot.1`` and
+   ``Installed-123-1.0__PSU.Slot.1``. These represent the same PSU, not two
+   different slots. Keep ``firmware:PSU.Slot.1`` in your runbook; Current takes
+   precedence over Installed when resolving this device.
+
+   Write one setting for ``firmware:PSU.Slot.1``. Do not create two settings
+   just because you see Current and Installed records for it. When executed,
+   that setting resolves to the Current record and targets the PSU once.
+
+   This preference does not choose between different devices. If the selector
+   also matches another related URI, or matches both a related resource and an
+   entry without ``RelatedItem``, execution fails as ambiguous.
+
+   In that case, identify the intended device using the explicit selectors
+   in the error and correct the setting before retrying.
+
+9. **The selected device is missing or cannot be updated.**
+
+   Your saved runbook contains ``firmware:PSU.Slot.1``. It used to select an
+   installed PSU. Before the next run, one of these changes occurs:
+
+   * The PSU is removed and no installed entry matches the selector.
+   * The PSU is still present but Redfish marks it non-updateable.
+   * Only Previous or Available firmware entries remain for that ID.
+
+   In each case, executing that setting fails. Ironic does not select slot 2,
+   select an old firmware record, or drop the selector and submit an
+   untargeted update.
+
+   Refresh inventory and check the device before editing or retrying the
+   runbook. An old row in cached inventory does not prove that the device is
+   still an installed, updateable target.
+
+   If the device should be present, resolve its inventory or updateability
+   problem before retrying. If your intended target has changed, identify
+   the replacement device and change the runbook deliberately.
+
+10. **Inventory uses a numeric resource ID.**
+
+    The PSU's related URI is
+    ``/redfish/v1/Chassis/1/PowerSupplies/1``. Copy its full component value
+    into the runbook::
+
+        firmware:/redfish/v1/Chassis/1/PowerSupplies/1
+
+    Keep the full selector when executing the runbook. Do not shorten it to
+    ``firmware:1``; the driver does not create that alias for the related
+    resource.
+
+    For example, chassis 2 could also have a PSU whose resource ID is ``1``::
+
+        firmware:/redfish/v1/Chassis/2/PowerSupplies/1
+
+    The chassis 1 selector targets chassis 1's PSU. To update chassis 2's PSU,
+    use the second full selector in a separate setting. Before reusing either
+    setting on another server, check which PSU that URI identifies there.
+
+Firmware version and Redfish Name changes alone do not change device-ID
+selectors. For duplicate inventory entries with different software IDs, the
+driver rejects the selector as ambiguous even across Current/Installed levels.
+
+A selector error stops that component's update; earlier steps or component
+updates may already have completed. Check what completed before retrying the
+runbook. After a successful run, list firmware components again to verify the
+reported version.
 
 Refreshing inventory on active nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

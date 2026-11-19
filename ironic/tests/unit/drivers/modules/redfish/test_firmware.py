@@ -181,9 +181,9 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
         self.assertEqual('firmware:TPM', components[0]['component'])
 
     def test_inventory_update_selector_survives_version_and_name_changes(self):
-        path = '/redfish/v1/Chassis/1/PowerSupplies/1'
+        path = '/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1'
         for identity, paths, selector in (
-                ('Installed-123-1.0__PSU.Slot.1', [path], path),
+                ('Installed-123-1.0__PSU.Slot.1', [path], 'PSU.Slot.1'),
                 ('Installed-123-1.0__PSU.Slot.1', [], 'PSU.Slot.1'),
                 ('Installed-123-1.0', [], '123'),
                 ('PSUFirmware', [], 'PSUFirmware')):
@@ -211,6 +211,146 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
                         path if paths else member.path,
                         firmware._inventory_update_target(
                             self.update_service, component))
+
+    def test_firmware_inventory_short_resource_ids(self):
+        paths = [
+            '/redfish/v1/Chassis/System.Embedded.1/PowerSubsystem/'
+            'PowerSupplies/PSU.Slot.3',
+            '/redfish/v1/Systems/System.Embedded.1/Processors/'
+            'ProcAccelerator.Slot.21-1',
+            '/redfish/v1/Chassis/Enclosure.Internal.0-1',
+            '/redfish/v1/Systems/System.Embedded.1/Storage/BOSS.Slot.41-1',
+            '/redfish/v1/Systems/System.Embedded.1/Storage/BOSS.Slot.41-1/'
+            'Drives/Disk.Direct.0-0:BOSS.Slot.41-1',
+        ]
+        self._set_inventory_members([
+            self._inventory_member('Current-123-1.0', '123', '1.0', paths),
+            self._inventory_member('Installed-123-1.0', '123', '1.0', paths),
+        ])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            firmware = task.driver.firmware
+            components = firmware.retrieve_firmware_inventory(
+                task, self.system, {}, [])
+            self.assertEqual(
+                {'firmware:' + path.rsplit('/', 1)[-1] for path in paths},
+                {item['component'] for item in components})
+            for path in paths:
+                self.assertEqual(
+                    path, firmware._inventory_update_target(
+                        self.update_service,
+                        'firmware:' + path.rsplit('/', 1)[-1]))
+                self.assertEqual(
+                    path, firmware._inventory_update_target(
+                        self.update_service, 'firmware:' + path))
+
+    def test_firmware_inventory_repeated_resource_ids(self):
+        paths = ['/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.3',
+                 '/redfish/v1/Chassis/2/PowerSupplies/PSU.Slot.3']
+        self._set_inventory_members([
+            self._inventory_member('PSUFirmware', '123', '1.0', paths)])
+        with task_manager.acquire(self.context, self.node.uuid) as task:
+            firmware = task.driver.firmware
+            components = firmware.retrieve_firmware_inventory(
+                task, self.system, {}, [])
+            self.assertEqual(
+                {'firmware:' + path for path in paths},
+                {item['component'] for item in components})
+            for path in paths:
+                self.assertEqual(
+                    path, firmware._inventory_update_target(
+                        self.update_service, 'firmware:' + path))
+            self.assertRaisesRegex(
+                exception.InvalidParameterValue,
+                'is ambiguous.*full Redfish URI',
+                firmware._inventory_update_target,
+                self.update_service, 'firmware:PSU.Slot.3')
+
+    def test_firmware_inventory_resource_id_matches_pathless_entry(self):
+        path = '/redfish/v1/Systems/1/Storage/Controllers/RAID'
+        for identity in ('RAID', 'Installed-222-2.0__RAID'):
+            with self.subTest(identity=identity):
+                member = self._inventory_member(identity, '222', '2.0')
+                self._set_inventory_members([
+                    self._inventory_member(
+                        'ControllerFirmware', '111', '1.0', [path]),
+                    member,
+                ])
+                with task_manager.acquire(self.context,
+                                          self.node.uuid) as task:
+                    firmware = task.driver.firmware
+                    components = firmware.retrieve_firmware_inventory(
+                        task, self.system, {}, [])
+                    self.assertEqual(
+                        {'firmware:' + path: '1.0', 'firmware:RAID': '2.0'},
+                        {item['component']: item['current_version']
+                         for item in components})
+                    self.assertEqual(
+                        path, firmware._inventory_update_target(
+                            self.update_service, 'firmware:' + path))
+                    self.assertEqual(
+                        member.path, firmware._inventory_update_target(
+                            self.update_service, 'firmware:' + member.path))
+                    error = self.assertRaises(
+                        exception.InvalidParameterValue,
+                        firmware._inventory_update_target,
+                        self.update_service, 'firmware:RAID')
+                    self.assertIn('is ambiguous', str(error))
+                    self.assertIn('firmware:' + path, str(error))
+                    self.assertIn('firmware:' + member.path, str(error))
+
+    def test_inventory_update_same_selector_across_idrac_generations(self):
+        path = ('/redfish/v1/Chassis/System.Embedded.1/PowerSubsystem/'
+                'PowerSupplies/PSU.Slot.1')
+        firmware = redfish_fw.RedfishFirmware()
+        for related_items in ([], [path]):
+            with self.subTest(related_items=related_items):
+                member = self._inventory_member(
+                    'Installed-123-1.0__PSU.Slot.1', '123', '1.0',
+                    related_items)
+                self._set_inventory_members([member])
+                self.assertEqual(
+                    path if related_items else member.path,
+                    firmware._inventory_update_target(
+                        self.update_service, 'firmware:PSU.Slot.1'))
+
+    @mock.patch.object(redfish_utils, 'get_system_collection', autospec=True)
+    def test_inventory_update_short_selector_collision_changes(
+            self, collection_mock):
+        collection_mock.return_value.members_identities = ['/system/1']
+        path = '/redfish/v1/Chassis/1/PowerSupplies/PSU.Slot.1'
+        firmware = redfish_fw.RedfishFirmware()
+        component = 'firmware:PSU.Slot.1'
+        for identities in (
+                ('Current-123-1.0', 'Installed-123-1.0__PSU.Slot.1'),
+                ('Installed-123-1.0', 'Current-123-1.0__PSU.Slot.1')):
+            with self.subTest(identities=identities):
+                member = self._inventory_member(
+                    identities[0], '123', '1.0', [path])
+                collision = self._inventory_member(
+                    identities[1], '123', '1.0')
+                self._set_inventory_members([member])
+                self.assertEqual(path, firmware._inventory_update_target(
+                    self.update_service, component))
+                self._set_inventory_members([member, collision])
+                with mock.patch.object(firmware, '_stage_firmware_file',
+                                       autospec=True) as stage_mock:
+                    self.assertRaisesRegex(
+                        exception.InvalidParameterValue,
+                        'is ambiguous.*full Redfish URI',
+                        firmware._submit_simple_update, self.node,
+                        self.update_service,
+                        {'component': component,
+                         'url': 'https://example.com/psu.exe'})
+                stage_mock.assert_not_called()
+                self.assertEqual(path, firmware._inventory_update_target(
+                    self.update_service, 'firmware:' + path))
+                self.assertEqual(
+                    collision.path, firmware._inventory_update_target(
+                        self.update_service, 'firmware:' + collision.path))
+                self._set_inventory_members([member])
+                self.assertEqual(path, firmware._inventory_update_target(
+                    self.update_service, component))
+        self.update_service.simple_update.assert_not_called()
 
     @mock.patch.object(redfish_utils, 'get_system_collection', autospec=True)
     def test_inventory_update_shared_device_target(self, collection_mock):
@@ -332,7 +472,7 @@ class RedfishFirmwareTestCase(db_base.DbTestCase):
                 self.assertEqual(
                     'nic:serial',
                     redfish_fw.RedfishFirmware._inventory_component_name(
-                        member, None, {}, names))
+                        member, None, {}, names, {}))
 
     def test_firmware_inventory_long_identifiers(self):
         # The device suffix must distinguish paths sharing a long prefix.
