@@ -16,6 +16,16 @@ from oslo_config import cfg
 from ironic.common.i18n import _
 
 opts = [
+    cfg.StrOpt('support_assist_share_url',
+               help=_('Network share URL for SupportAssist collections. '
+                      'Supported schemes: cifs, nfs, http, https, ftp, tftp. '
+                      'Include the host and share path; configure credentials '
+                      'separately. The BMC must reach this share.')),
+    cfg.StrOpt('support_assist_share_username',
+               help=_('Username for the SupportAssist destination share.')),
+    cfg.StrOpt('support_assist_share_password',
+               secret=True,
+               help=_('Password for the SupportAssist destination share.')),
     cfg.IntOpt('query_raid_config_job_status_interval',
                default=120,
                min=1,

@@ -524,6 +524,108 @@ Method Name       HTTP Method    Description
                                  ``dvd``, ``usb`` or ``floppy``.
 ================  ============   ==============================================
 
+SupportAssist collections
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``idrac-redfish`` vendor interface exposes SupportAssist operations for
+iDRAC 9 and later, subject to the actions advertised by the installed firmware.
+Configure a destination that the BMC can reach in ``ironic.conf``:
+
+.. code-block:: ini
+
+    [drac]
+    support_assist_share_url = nfs://192.0.2.10/export/supportassist
+
+Supported schemes are ``nfs``, ``cifs``, ``http``, ``https``, ``ftp`` and
+``tftp``. The URL contains the server and destination directory, without
+credentials, query parameters or a fragment. NFS paths retain the leading
+slash; other schemes use the path relative to the share server. HTTP and HTTPS
+allow an explicit port. Configure authentication separately using
+``support_assist_share_username`` and ``support_assist_share_password``;
+both are required for CIFS. The password option is secret. Collection callers
+cannot override the destination or supply share credentials.
+
+The node must use the ``idrac-redfish`` vendor interface. Callers need the
+existing node vendor-passthru API permissions. The available methods are:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 10 50
+
+   * - Method
+     - HTTP
+     - Arguments and response
+   * - ``support_assist_get_eula_status``
+     - GET
+     - No arguments. Returns ``accepted`` and original Dell ``details``.
+   * - ``support_assist_accept_eula``
+     - POST
+     - No arguments. Explicitly accepts the EULA and returns Dell's response.
+   * - ``support_assist_register``
+     - POST
+     - ``registration``: an object containing Dell registration fields.
+       Returns Dell's response; requires firmware advertising this action.
+   * - ``support_assist_collect``
+     - POST
+     - Optional ``data_types`` (a JSON list, default ``["HWData"]``) and
+       ``filter_data`` (a JSON boolean, default ``false``).
+       Returns a ``task_monitor`` URI immediately.
+   * - ``get_job_status``
+     - GET
+     - ``task_monitor``: the URI returned by an asynchronous operation. Reads
+       one status response and returns ``is_processing``, ``task_state``,
+       ``task_status``, ``percent_complete``, ``messages`` and Dell
+       ``job_state`` when present.
+
+``get_job_status`` is a generic task-status method available through the
+``idrac-redfish`` vendor interface. It accepts node-relative
+``/redfish/v1/TaskService/Tasks/<id>`` and
+``/redfish/v1/TaskService/TaskMonitors/<id>`` URIs, including those returned by
+SupportAssist collection. It does not require SupportAssist share configuration
+and does not accept Dell JobService job URIs.
+
+Check the EULA, and accept it explicitly if needed:
+
+.. code-block:: console
+
+    openstack baremetal node passthru call --http-method GET \
+        <node> support_assist_get_eula_status
+    openstack baremetal node passthru call --http-method POST \
+        <node> support_assist_accept_eula
+
+Start a collection, then poll the returned handle:
+
+.. code-block:: console
+
+    openstack baremetal node passthru call --http-method POST \
+        --arg 'data_types=["HWData","DebugLogs"]' --arg filter_data=true \
+        <node> support_assist_collect
+    openstack baremetal node passthru call --http-method GET \
+        --arg task_monitor=/redfish/v1/TaskService/TaskMonitors/JID_123 \
+        <node> get_job_status
+
+Collection selectors are ``HWData``, ``DebugLogs``, ``OSAppData``, ``TTYLogs``,
+``TelemetryReports`` and ``GPULogs``. Availability and prerequisites depend on
+the firmware and hardware; iDRAC reports unsupported requests. Filtering asks
+iDRAC to remove identifying data and may affect the diagnostic content.
+
+Registration is independent of collection and is absent on newer firmware.
+If needed on supported firmware, pass ``--arg 'registration={...}'`` with
+non-empty string fields ``City``, ``CompanyName``, ``Country``,
+``PrimaryFirstName``, ``PrimaryLastName``, ``PrimaryPhoneNumber``, ``State``,
+``Street1`` and ``Zip``. Optional fields are ``PrimaryEmail``,
+``SecondaryEmail``, ``SecondaryFirstName``, ``SecondaryLastName`` and
+``SecondaryPhoneNumber``. Registration may require iSM. These methods do not
+enable OS-to-BMC passthrough, register automatically or accept the EULA as a
+side effect of collection.
+
+The BMC writes the bundle directly to the configured share. Retrieve it from
+that destination using the share's access controls. Ironic does not download,
+store or return the bundle, and does not predict its filename. Retain the
+returned task-monitor URI and poll while the BMC retains it; a completed
+monitor can expire. A terminal state does not necessarily mean success:
+inspect the state, status and messages for errors.
+
 Known Issues
 ============
 
