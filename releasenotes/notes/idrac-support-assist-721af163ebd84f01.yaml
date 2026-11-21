@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    The ``idrac-redfish`` vendor interface provides SupportAssist EULA status
+    and acceptance, registration where supported, collection to a configured
+    network share, and generic Redfish task polling through ``get_job_status``.
+    Polling accepts TaskService Tasks and TaskMonitors URIs returned by
+    asynchronous operations. Configure the SupportAssist destination with
+    ``[drac]support_assist_share_url`` and optional share credentials.
+    Collections default to hardware data without filtering and return a task
+    monitor immediately. The BMC writes the bundle to the share; Ironic does
+    not download it or implicitly accept the EULA or register SupportAssist.
