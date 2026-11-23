@@ -1,0 +1,15 @@
+---
+features:
+  - |
+    The ``idrac-redfish`` vendor interface provides SupportAssist EULA status
+    and acceptance, collection to a configured HTTP or HTTPS destination, and generic
+    Redfish task polling through ``get_job_status``.
+    Polling accepts TaskService Tasks, TaskMonitors and Dell OEM Jobs URIs
+    returned by asynchronous operations. Configure the SupportAssist
+    destination with ``[drac]support_assist_share_url`` and optional share
+    credentials.
+    The optional ``{node_uuid}`` URL path placeholder uses the Ironic node UUID
+    for per-node destinations. Inspection data is not required.
+    Collections default to hardware data without filtering and return a task
+    monitor immediately. The BMC writes the bundle to the share; Ironic does
+    not download it or implicitly accept the EULA.

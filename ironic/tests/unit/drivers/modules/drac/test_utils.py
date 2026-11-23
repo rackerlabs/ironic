@@ -80,6 +80,26 @@ class DracUtilsOemManagerTestCase(test_utils.BaseDracTest):
                 'test method',
                 lambda m: m.test_method())
 
+    def test_execute_oem_manager_method_eula_action_missing(
+            self, mock_get_system):
+        manager = mock.Mock()
+        manager.get_oem_extension.return_value.lifecycle_service.\
+            support_assist_accept_eula.side_effect = (
+                sushy.exceptions.MissingActionError(
+                    action='SupportAssistAcceptEULA',
+                    resource='/DellLCService'))
+        mock_get_system.return_value.managers = [manager]
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            error = self.assertRaises(
+                exception.RedfishError,
+                drac_utils.execute_oem_manager_method,
+                task, 'accept SupportAssist EULA',
+                lambda m: m.lifecycle_service.support_assist_accept_eula())
+
+        self.assertIn('SupportAssistAcceptEULA', str(error))
+
     def test_execute_oem_manager_method_managers_fail(self, mock_get_system):
         fake_manager_oem1 = mock.Mock()
         fake_manager_oem1.test_method.side_effect = (
