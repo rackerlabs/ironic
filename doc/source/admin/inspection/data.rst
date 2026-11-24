@@ -69,6 +69,14 @@ Since many server-side plug-ins, known as
 :doc:`hooks` live in the Ironic source tree
 an effort is being made to define it here.
 
+The structures documented below take precedence over the behavior of any
+individual inspection interface. Where an interface reports a well-known
+field differently, the interface is expected to change to match this
+definition. All fields are optional, since not every interface or piece of
+hardware can provide every value, but when a well-known field is present
+it must have the data type documented here. Interfaces and hardware
+managers may report additional fields.
+
 Top-Level
 ~~~~~~~~~
 
@@ -86,6 +94,33 @@ Top-Level
     "``lldp_raw``", "Optional JSON object of LLDP data"
     "``pci_devices``", "Optional list of JSON objects of PCI details"
     "``usb_devices``", "Optional list of JSON objects of USB details"
+
+CPU
+~~~
+
+The ``cpu`` object describes the processors of the node as a whole. Only
+general purpose processors (CPUs) are described here; accelerators such as
+GPUs are not counted.
+
+.. csv-table::
+    :header: "Key", "Type", "Details"
+
+    "``model_name``", "string", "Model name of the CPU, e.g. ``AMD EPYC 9124
+    16-Core Processor``. When multiple CPUs are installed, this is the model
+    of the first one."
+    "``frequency``", "string", "Maximum frequency of the CPU in MHz, e.g.
+    ``3700.0000``."
+    "``count``", "integer", "Total number of logical CPUs (hardware threads)
+    across all sockets, e.g. ``32`` for one 16 core processor with two
+    threads per core."
+    "``architecture``", "string", "CPU architecture using the names reported
+    by ``uname -m``, e.g. ``x86_64`` or ``aarch64``. An empty string if the
+    architecture could not be determined."
+    "``flags``", "list of strings", "CPU feature flags as reported by the
+    Linux kernel in ``/proc/cpuinfo``, e.g. ``[""fpu"", ""vme"", ""sse4_2""]``.
+    Used by the ``cpu-capabilities`` hook. Out-of-band inspection interfaces
+    such as *redfish* are generally unable to provide this field."
+    "``socket_count``", "integer", "Number of populated CPU sockets."
 
 .. _plugin-data:
 

@@ -14,9 +14,20 @@
     ],
     "cpu":{
       "model_name":"QEMU Virtual CPU version 2.5+",
-      "frequency":null,
+      "frequency":"2400.0000",
       "count":1,
-      "architecture":"x86_64"
+      "architecture":"x86_64",
+      "flags":[
+        "fpu",
+        "de",
+        "pse",
+        "tsc",
+        "msr",
+        "pae",
+        "mce",
+        "cx8"
+      ],
+      "socket_count":1
     }
   },
   "plugin_data":{
