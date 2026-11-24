@@ -16,6 +16,8 @@
       "model_name":"QEMU Virtual CPU version 2.5+",
       "frequency":"2400.0000",
       "count":1,
+      "core_count":1,
+      "thread_count":1,
       "architecture":"x86_64",
       "flags":[
         "fpu",

@@ -1,0 +1,16 @@
+---
+features:
+  - |
+    The ``cpu`` object of the inspection inventory now has well-known
+    ``core_count`` and ``thread_count`` fields, holding the total number
+    of physical cores and of logical CPUs (hardware threads) across all
+    sockets. The ``redfish`` inspection interface reports both fields
+    from the ``TotalCores`` and ``TotalThreads`` properties of the CPUs.
+    The ``cpus`` inspection hook now uses ``thread_count``, falling back
+    to ``count`` when it is not reported.
+deprecations:
+  - |
+    The ``count`` field of the ``cpu`` object of the inspection inventory
+    is deprecated in favor of ``thread_count``, which has the same meaning
+    but an unambiguous name. Inspection hooks and rules using ``count``
+    should move to ``thread_count``.

@@ -24,7 +24,11 @@ class CPUSHook(base.InspectionHook):
     """Hook to set node's CPUs count based on the inventory."""
 
     def __call__(self, task, inventory, plugin_data):
-        cpu_count = int(inventory.get('cpu', {}).get('count', 0))
+        cpu = inventory.get('cpu', {})
+        # NOTE(cardoe): count is deprecated in favor of thread_count but
+        #               is still the only field reported by older
+        #               inspection interfaces and ramdisks.
+        cpu_count = int(cpu.get('thread_count') or cpu.get('count') or 0)
         if cpu_count == 0:
             LOG.warning('No CPU count available for node %s.', task.node.uuid)
             return

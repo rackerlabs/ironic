@@ -327,13 +327,18 @@ class RedfishInspect(base.InspectInterface):
         cpus = [proc for proc in processors
                 if proc.processor_type == sushy.ProcessorType.CPU]
         if cpus:
-            cpu['count'] = sum(proc.total_threads or 0 for proc in cpus)
             cpu['socket_count'] = len(cpus)
-            processor = cpus[0]
         else:
-            if system.processors.summary:
-                cpu['count'], _ = system.processors.summary
-            processor = processors[0]
+            cpus = processors
+        processor = cpus[0]
+
+        core_count = self._sum_processor_field(cpus, 'total_cores')
+        if core_count is not None:
+            cpu['core_count'] = core_count
+        thread_count = self._sum_processor_field(cpus, 'total_threads')
+        if thread_count is not None:
+            cpu['thread_count'] = thread_count
+        cpu['count'] = thread_count or 0
 
         if processor.model is not None:
             cpu['model_name'] = str(processor.model)
@@ -343,6 +348,18 @@ class RedfishInspect(base.InspectInterface):
             processor.instruction_set) or ''
 
         return cpu
+
+    @staticmethod
+    def _sum_processor_field(processors, field):
+        """Sum a field across processors, ignoring unreported values.
+
+        :param processors: A list of Sushy Processor objects.
+        :param field: The name of the Processor attribute to sum.
+        :returns: The sum, or None if no processor reports the field.
+        """
+        values = [getattr(proc, field) for proc in processors
+                  if getattr(proc, field) is not None]
+        return sum(values) if values else None
 
     def _get_simple_disks(self, system):
         is_full_storage = False

@@ -110,9 +110,13 @@ GPUs are not counted.
     of the first one."
     "``frequency``", "string", "Maximum frequency of the CPU in MHz, e.g.
     ``3700.0000``."
-    "``count``", "integer", "Total number of logical CPUs (hardware threads)
-    across all sockets, e.g. ``32`` for one 16 core processor with two
-    threads per core."
+    "``count``", "integer", "**Deprecated**, use ``thread_count`` instead.
+    Total number of logical CPUs (hardware threads) across all sockets."
+    "``core_count``", "integer", "Total number of physical cores across all
+    sockets, e.g. ``16`` for one 16 core processor."
+    "``thread_count``", "integer", "Total number of logical CPUs (hardware
+    threads) across all sockets, e.g. ``32`` for one 16 core processor with
+    two threads per core."
     "``architecture``", "string", "CPU architecture using the names reported
     by ``uname -m``, e.g. ``x86_64`` or ``aarch64``. An empty string if the
     architecture could not be determined."

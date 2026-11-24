@@ -35,3 +35,29 @@ class CPUSTestCase(db_base.DbTestCase):
             self.node.refresh()
             result = self.node.properties.get('cpus', '')
             self.assertEqual(result, 20)
+
+    def test_cpus_thread_count(self):
+        self.inventory['cpu']['thread_count'] = 40
+        with task_manager.acquire(self.context, self.node.id) as task:
+            cpu_hook.CPUSHook().__call__(task, self.inventory,
+                                         self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('cpus', '')
+            self.assertEqual(result, 40)
+
+    def test_cpus_thread_count_none(self):
+        self.inventory['cpu']['thread_count'] = None
+        with task_manager.acquire(self.context, self.node.id) as task:
+            cpu_hook.CPUSHook().__call__(task, self.inventory,
+                                         self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('cpus', '')
+            self.assertEqual(result, 20)
+
+    def test_cpus_no_count(self):
+        self.inventory['cpu'].pop('count')
+        with task_manager.acquire(self.context, self.node.id) as task:
+            cpu_hook.CPUSHook().__call__(task, self.inventory,
+                                         self.plugin_data)
+            self.node.refresh()
+            self.assertNotIn('cpus', self.node.properties)
