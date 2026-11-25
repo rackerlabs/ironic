@@ -139,9 +139,16 @@ class DracRedfishInspect(redfish_inspect.RedfishInspect):
                       len(parsed_lldp))
 
         except Exception as e:
-            LOG.debug("Dell OEM LLDP collection failed, falling back to "
-                      "standard: %s", e)
-            # Fallback to standard Redfish LLDP collection
+            LOG.debug("Dell OEM LLDP collection failed for node %(node)s: "
+                      "%(error)s", {'node': task.node.uuid, 'error': e})
+            parsed_lldp = {}
+
+        # NOTE(cardoe): Newer iDRACs are now providing it in the standard
+        # locations so fallback to attempting that path.
+        if not parsed_lldp:
+            LOG.debug("No LLDP data from Dell OEM switch connections for "
+                      "node %s, falling back to standard Redfish LLDP",
+                      task.node.uuid)
             return super(DracRedfishInspect, self)._collect_lldp_data(
                 task, system)
 

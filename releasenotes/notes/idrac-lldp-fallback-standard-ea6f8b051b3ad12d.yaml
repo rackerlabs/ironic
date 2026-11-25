@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Fixes the ``idrac-redfish`` inspection interface not collecting LLDP data
+    on iDRACs without the Dell OEM ``DellSwitchConnections`` endpoint, such
+    as iDRAC10. It now falls back to the standard Redfish LLDP data whenever
+    the Dell OEM endpoint provides no LLDP data, not only when it fails.

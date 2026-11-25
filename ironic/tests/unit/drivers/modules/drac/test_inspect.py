@@ -270,6 +270,33 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
                 task.driver.inspect, task, system_mock)
             self.assertEqual(mock_super_collect.return_value, result)
 
+    @mock.patch.object(redfish_inspect.RedfishInspect, '_collect_lldp_data',
+                       autospec=True)
+    @mock.patch.object(drac_inspect.DracRedfishInspect,
+                       '_get_dell_switch_connections', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_collect_lldp_data_fallback_no_dell_oem(self, mock_get_system,
+                                                    mock_get_connections,
+                                                    mock_super_collect):
+        """Test fallback when the Dell OEM endpoint is not available."""
+        system_mock = self._setup_lldp_system_mock(mock_get_system)
+
+        # e.g. iDRAC10 returns a 404 for DellSwitchConnections
+        mock_get_connections.return_value = []
+        mock_super_collect.return_value = {
+            'NIC.Slot.1-1': {
+                'switch_chassis_id': '00:00:5e:00:53:01',
+                'switch_port_id': 'Ethernet1/1'
+            }
+        }
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            result = task.driver.inspect._collect_lldp_data(task, system_mock)
+            mock_super_collect.assert_called_once_with(
+                task.driver.inspect, task, system_mock)
+            self.assertEqual(mock_super_collect.return_value, result)
+
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_collect_lldp_data_filters_no_link(self, mock_get_system):
         """Test that 'No Link' connections are filtered out."""
