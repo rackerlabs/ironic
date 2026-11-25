@@ -286,12 +286,14 @@ class RedfishInspectTestCase(db_base.DbTestCase):
 
         expected_pcie_devices = [
             {'class': 'NetworkController',
+             'device_id': '16d7',
              'product_id': '16d7',
              'vendor_id': '14e4',
              'subsystem_id': '1402',
              'subsystem_vendor_id': '14e4',
              'revision': '01'},
             {'class': 'MassStorageController',
+             'device_id': '1234',
              'product_id': '1234',
              'vendor_id': '1000',
              'revision': '02'}
@@ -997,6 +999,7 @@ class RedfishInspectTestCase(db_base.DbTestCase):
                                                       self.context)
         expected_pcie_devices = [
             {'class': 'NetworkController',
+             'device_id': '16d7',
              'product_id': '16d7',
              'subsystem_id': '1402',
              'revision': '01'}

@@ -657,7 +657,10 @@ class RedfishInspect(base.InspectInterface):
         if function.device_class is not None:
             info['class'] = function.device_class.value
         if function.device_id is not None:
-            info['product_id'] = _normalize_pci_hex(function.device_id)
+            info['device_id'] = _normalize_pci_hex(function.device_id)
+            # NOTE(cardoe): product_id is deprecated in favor of device_id,
+            #               kept for compatibility with the agent.
+            info['product_id'] = info['device_id']
         if function.vendor_id is not None:
             info['vendor_id'] = _normalize_pci_hex(function.vendor_id)
         if function.subsystem_id is not None:

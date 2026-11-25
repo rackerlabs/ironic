@@ -1,0 +1,11 @@
+---
+features:
+  - |
+    Redfish inspection now reports ``device_id`` for each entry of the
+    ``pci_devices`` inventory, the name the PCI specification and the
+    Redfish ``PCIeFunction`` schema use for the device ID.
+deprecations:
+  - |
+    The ``product_id`` field of the ``pci_devices`` inventory is deprecated
+    in favor of ``device_id``. It remains available for compatibility, but
+    will eventually be removed.
