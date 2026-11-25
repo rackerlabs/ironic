@@ -82,6 +82,10 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
         """System mock for LLDP tests."""
         system_mock = self.init_system_mock(mock_get_system.return_value)
         system_mock.identity = 'System.Embedded.1'
+        system_mock.chassis = []
+        system_mock.ethernet_interfaces.members_identities = [
+            '/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces/' + i
+            for i in ('NIC.Integrated.1-1-1', 'NIC.Integrated.1-1-2')]
         return system_mock
 
     def _setup_dell_connection_mock(self, system_mock, url='https://bmc.example.com/redfish/v1'):
@@ -239,6 +243,52 @@ class DracRedfishInspectionTestCase(test_utils.BaseDracTest):
                                   shared=True) as task:
             result = task.driver.inspect._collect_lldp_data(task, system_mock)
             self.assertEqual(expected_lldp, result)
+
+    @mock.patch.object(drac_inspect.DracRedfishInspect,
+                       '_get_dell_switch_connections', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_collect_lldp_data_dell_oem_partitions(self, mock_get_system,
+                                                   mock_get_connections):
+        """Test mapping switch connections to the interfaces of a port.
+
+        Laid out like an iDRAC9, where the switch connection is reported
+        for the partition NIC.Slot.1-1-1 while the MAC address is on the
+        ethernet interface of the port, NIC.Slot.1-1.
+        """
+        system_mock = self._setup_lldp_system_mock(mock_get_system)
+        adapter_path = ('/redfish/v1/Chassis/System.Embedded.1/'
+                        'NetworkAdapters/NIC.Slot.1')
+        functions = []
+        for function_id in ('NIC.Slot.1-1', 'NIC.Slot.1-1-1'):
+            function = mock.Mock(identity=function_id)
+            function.json = {'Links': {'PhysicalNetworkPortAssignment': {
+                '@odata.id': adapter_path + '/Ports/NIC.Slot.1-1'}}}
+            functions.append(function)
+        adapter = mock.Mock()
+        adapter.network_device_functions.get_members.return_value = functions
+        chassis = mock.Mock()
+        chassis.network_adapters.get_members.return_value = [adapter]
+        system_mock.chassis = [chassis]
+        system_mock.ethernet_interfaces.members_identities = [
+            '/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces/' + i
+            for i in ('NIC.Slot.1-1', 'NIC.Slot.1-1-1')]
+
+        mock_get_connections.return_value = [
+            {'FQDD': 'iDRAC.Embedded.1',
+             'SwitchConnectionID': '00:00:5e:00:53:01',
+             'SwitchPortConnectionID': 'Gi1/0/2'},
+            {'FQDD': 'NIC.Slot.1-1-1',
+             'SwitchConnectionID': '00:00:5e:00:53:02',
+             'SwitchPortConnectionID': 'Ethernet1/2'},
+        ]
+
+        lldp = {'switch_chassis_id': '00:00:5e:00:53:02',
+                'switch_port_id': 'Ethernet1/2'}
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            result = task.driver.inspect._collect_lldp_data(task, system_mock)
+        self.assertEqual({'NIC.Slot.1-1': lldp, 'NIC.Slot.1-1-1': lldp},
+                         result)
 
     @mock.patch.object(redfish_inspect.RedfishInspect, '_collect_lldp_data',
                        autospec=True)

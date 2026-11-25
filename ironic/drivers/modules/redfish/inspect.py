@@ -13,6 +13,8 @@
 Redfish Inspect Interface
 """
 
+import collections
+
 from oslo_log import log
 from oslo_utils import netutils
 from oslo_utils import units
@@ -93,6 +95,67 @@ def _get_pci_address(pcie_function):
         LOG.debug("Malformed PCI address information in PCIeFunction "
                   "%s: %s", pcie_function.identity, exc)
         return None
+
+
+def _odata_id(link):
+    """Get the path from a Redfish link.
+
+    :param link: A Redfish link, e.g. ``{"@odata.id": "/redfish/v1/..."}``.
+    :returns: The path without a trailing slash or None.
+    """
+    if isinstance(link, dict) and link.get('@odata.id'):
+        return link['@odata.id'].rstrip('/')
+    return None
+
+
+class _LLDPInterfaceMap:
+    """Map Redfish network resources to ethernet interface names.
+
+    LLDP data is reported for physical network ports, while the inventory
+    describes the system's ethernet interfaces, which may be named after
+    the network device functions on top of the ports (e.g. ``NIC.Slot.1-1``
+    and ``NIC.Slot.1-1-1``). This uses the links between them to find the
+    interfaces connected through each port.
+    """
+
+    def __init__(self, interface_ids, port_interfaces, function_ports):
+        """Create the map.
+
+        :param interface_ids: Set of ethernet interface identities or None
+            if they are unknown.
+        :param port_interfaces: Dict mapping the path of a port to the set
+            of ethernet interface identities using it.
+        :param function_ports: Dict mapping the identity of a network device
+            function to the path of its port.
+        """
+        self.interface_ids = interface_ids
+        self.port_interfaces = port_interfaces
+        self.function_ports = function_ports
+
+    def for_port(self, port_path, port_id):
+        """Get the interfaces connected through a port.
+
+        Without links, the port is matched by its identity.
+
+        :param port_path: The path of the port.
+        :param port_id: The identity of the port.
+        :returns: Sorted list of interface identities.
+        """
+        linked = self.port_interfaces.get(port_path)
+        if linked:
+            return sorted(linked)
+        if self.interface_ids is None or port_id in self.interface_ids:
+            return [port_id]
+        return []
+
+    def for_function(self, function_id):
+        """Get the interfaces sharing a port with a network device function.
+
+        :param function_id: The identity of the network device function.
+        :returns: Sorted list of interface identities.
+        """
+        return self.for_port(self.function_ports.get(function_id),
+                             function_id)
 
 
 class RedfishInspect(base.InspectInterface):
@@ -707,6 +770,79 @@ class RedfishInspect(base.InspectInterface):
             info['revision'] = _normalize_pci_hex(function.revision_id)
         return info
 
+    def _get_network_adapters(self, task, system):
+        """Get the network adapters of all chassis of a system.
+
+        :param task: A TaskManager instance
+        :param system: Sushy system object
+        :returns: List of Sushy NetworkAdapter objects
+        """
+        adapters = []
+        try:
+            for chassis in system.chassis or []:
+                try:
+                    adapters.extend(chassis.network_adapters.get_members())
+                except Exception as ex:
+                    LOG.debug('Failed to get network adapters for chassis '
+                              'on node %(node)s: %(error)s',
+                              {'node': task.node.uuid, 'error': ex})
+        except Exception as ex:
+            LOG.warning('Failed to get network adapters for node %(node)s: '
+                        '%(error)s', {'node': task.node.uuid, 'error': ex})
+        return adapters
+
+    def _get_lldp_interface_map(self, task, system, adapters):
+        """Build the map of network resources to ethernet interfaces.
+
+        :param task: A TaskManager instance
+        :param system: Sushy system object
+        :param adapters: List of Sushy NetworkAdapter objects
+        :returns: A _LLDPInterfaceMap instance
+        """
+        try:
+            interface_ids = {
+                path.rstrip('/').rsplit('/', 1)[-1]
+                for path in system.ethernet_interfaces.members_identities}
+        except Exception as ex:
+            LOG.debug('Failed to get ethernet interfaces for node %(node)s: '
+                      '%(error)s', {'node': task.node.uuid, 'error': ex})
+            interface_ids = None
+
+        port_interfaces = collections.defaultdict(set)
+        function_ports = {}
+        for adapter in adapters:
+            try:
+                functions = adapter.network_device_functions.get_members()
+            except Exception as ex:
+                LOG.debug('Failed to get network device functions for '
+                          'adapter on node %(node)s: %(error)s',
+                          {'node': task.node.uuid, 'error': ex})
+                continue
+
+            for function in functions:
+                links = (function.json or {}).get('Links') or {}
+                port_path = _odata_id(
+                    links.get('PhysicalNetworkPortAssignment'))
+                if not port_path:
+                    continue
+                function_ports[function.identity] = port_path
+
+                linked = list(links.get('EthernetInterfaces') or [])
+                if links.get('EthernetInterface'):
+                    linked.append(links['EthernetInterface'])
+                names = {path.rsplit('/', 1)[-1]
+                         for path in map(_odata_id, linked) if path}
+                # NOTE(cardoe): Not every BMC links the function to the
+                #               ethernet interface, but they usually share
+                #               the identity, e.g. on Dell iDRAC.
+                names = names or {function.identity}
+                if interface_ids is not None:
+                    names &= interface_ids
+                port_interfaces[port_path].update(names)
+
+        return _LLDPInterfaceMap(interface_ids, port_interfaces,
+                                 function_ports)
+
     def _collect_lldp_data(self, task, system):
         """Collect LLDP data from Redfish NetworkAdapter Ports.
 
@@ -715,6 +851,8 @@ class RedfishInspect(base.InspectInterface):
 
         Default implementation uses standard Redfish LLDP data from
         Port.Ethernet.LLDPReceive via Sushy NetworkAdapter/Port resources.
+        The data of each port is reported for the ethernet interfaces
+        connected through it.
 
         :param task: A TaskManager instance
         :param system: Sushy system object
@@ -724,66 +862,48 @@ class RedfishInspect(base.InspectInterface):
         """
         parsed_lldp = {}
 
-        try:
-            # Check if chassis exists
-            if not system.chassis:
-                return parsed_lldp
+        adapters = self._get_network_adapters(task, system)
+        if not adapters:
+            return parsed_lldp
+        interface_map = self._get_lldp_interface_map(task, system, adapters)
 
-            # Process each chassis
-            for chassis in system.chassis:
+        for adapter in adapters:
+            try:
+                ports = adapter.ports.get_members()
+            except Exception as ex:
+                LOG.debug('Failed to get ports for adapter '
+                          'on node %(node)s: %(error)s',
+                          {'node': task.node.uuid, 'error': ex})
+                continue
+
+            for port in ports:
                 try:
-                    # Get NetworkAdapters collection
-                    network_adapters = (
-                        chassis.network_adapters.get_members())
-                except sushy.exceptions.SushyError as ex:
-                    LOG.debug('Failed to get network adapters for chassis '
-                              'on node %(node)s: %(error)s',
-                              {'node': task.node.uuid, 'error': ex})
-                    continue
-
-                # Process each NetworkAdapter
-                for adapter in network_adapters:
-                    try:
-                        # Get Ports collection using Sushy
-                        ports = adapter.ports.get_members()
-                    except sushy.exceptions.SushyError as ex:
-                        LOG.debug('Failed to get ports for adapter '
-                                  'on node %(node)s: %(error)s',
-                                  {'node': task.node.uuid, 'error': ex})
+                    if (not port.ethernet
+                            or not port.ethernet.lldp_receive):
                         continue
 
-                    # Process each Port
-                    for port in ports:
-                        try:
-                            # Check if LLDP data exists using Sushy
-                            if (not port.ethernet
-                                    or not port.ethernet.lldp_receive):
-                                continue
+                    lldp_dict = self._convert_lldp_receive_to_dict(
+                        port.ethernet.lldp_receive)
+                    if not lldp_dict or not port.identity:
+                        continue
 
-                            lldp_receive = port.ethernet.lldp_receive
+                    interfaces = interface_map.for_port(
+                        (port.path or '').rstrip('/'), port.identity)
+                    if not interfaces:
+                        LOG.debug('Ignoring LLDP data of port %(port)s on '
+                                  'node %(node)s, no ethernet interface '
+                                  'uses it', {'port': port.identity,
+                                              'node': task.node.uuid})
+                    for name in interfaces:
+                        parsed_lldp.setdefault(name, lldp_dict)
 
-                            # Convert directly to parsed LLDP format
-                            lldp_dict = self._convert_lldp_receive_to_dict(
-                                lldp_receive)
+                except Exception as e:
+                    LOG.debug('Failed to process LLDP data for port '
+                              '%(port)s on node %(node)s: %(error)s',
+                              {'port': port.identity,
+                               'node': task.node.uuid, 'error': e})
+                    continue
 
-                            if not lldp_dict:
-                                continue
-
-                            # Use port identity directly as interface name
-                            if port.identity:
-                                parsed_lldp[port.identity] = lldp_dict
-
-                        except Exception as e:
-                            LOG.debug('Failed to process LLDP data for port '
-                                      '%(port)s on node %(node)s: %(error)s',
-                                      {'port': port.identity,
-                                       'node': task.node.uuid, 'error': e})
-                            continue
-
-        except Exception as e:
-            LOG.warning('Failed to collect standard Redfish LLDP data for '
-                        'node %(node)s: %(error)s',
-                        {'node': task.node.uuid, 'error': e})
         return parsed_lldp
 
     def _convert_lldp_receive_to_dict(self, lldp_receive):

@@ -135,6 +135,10 @@ class DracRedfishInspect(redfish_inspect.RedfishInspect):
                     'switch_port_id': switch_port
                 }
 
+            if parsed_lldp:
+                parsed_lldp = self._map_dell_lldp_to_interfaces(
+                    task, system, parsed_lldp)
+
             LOG.debug("Generated parsed LLDP data for %d interfaces",
                       len(parsed_lldp))
 
@@ -152,6 +156,33 @@ class DracRedfishInspect(redfish_inspect.RedfishInspect):
             return super(DracRedfishInspect, self)._collect_lldp_data(
                 task, system)
 
+        return parsed_lldp
+
+    def _map_dell_lldp_to_interfaces(self, task, system, fqdd_lldp):
+        """Map Dell switch connections to ethernet interfaces.
+
+        The FQDD of a switch connection names a network device function,
+        e.g. ``NIC.Slot.1-1-1``, which is not necessarily the name of the
+        ethernet interface with the MAC address, e.g. ``NIC.Slot.1-1`` on
+        iDRAC9. Report the data for every interface using the same port.
+
+        :param task: A TaskManager instance
+        :param system: Sushy system object
+        :param fqdd_lldp: Dict mapping FQDDs to parsed LLDP data
+        :returns: Dict mapping interface names to parsed LLDP data
+        """
+        adapters = self._get_network_adapters(task, system)
+        interface_map = self._get_lldp_interface_map(task, system, adapters)
+
+        parsed_lldp = {}
+        for fqdd, lldp in fqdd_lldp.items():
+            interfaces = interface_map.for_function(fqdd)
+            if not interfaces:
+                LOG.debug("Ignoring Dell switch connection of %(fqdd)s on "
+                          "node %(node)s, it is not an ethernet interface",
+                          {'fqdd': fqdd, 'node': task.node.uuid})
+            for name in interfaces:
+                parsed_lldp.setdefault(name, lldp)
         return parsed_lldp
 
     def _get_dell_switch_connections(self, task):

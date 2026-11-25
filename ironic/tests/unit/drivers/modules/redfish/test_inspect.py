@@ -37,6 +37,27 @@ class MockedSushyError(Exception):
     pass
 
 
+_SYSTEM_PATH = '/redfish/v1/Systems/System.Embedded.1'
+_ADAPTER_PATH = ('/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/'
+                 'NIC.Slot.1')
+
+
+def _network_device_function(identity, port_id, interface_ids=None):
+    """Mock a NetworkDeviceFunction linked to a port of NIC.Slot.1."""
+    links = {
+        'PhysicalNetworkPortAssignment': {
+            '@odata.id': _ADAPTER_PATH + '/Ports/' + port_id},
+    }
+    if interface_ids is not None:
+        links['EthernetInterfaces'] = [
+            {'@odata.id': _SYSTEM_PATH + '/EthernetInterfaces/' + iface}
+            for iface in interface_ids]
+    function = mock.Mock()
+    function.identity = identity
+    function.json = {'Links': links}
+    return function
+
+
 class RedfishInspectTestCase(db_base.DbTestCase):
 
     def setUp(self):
@@ -1160,13 +1181,18 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         mock_ethernet.lldp_receive = mock_lldp
         mock_ethernet.associated_mac_addresses = ['14:23:F3:F5:3B:A0']
 
+        # Laid out like a Dell iDRAC10, where the ethernet interface is
+        # named after the network device function on top of the port.
         mock_port = mock.Mock()
         mock_port.identity = 'NIC.Slot.1-1'
+        mock_port.path = _ADAPTER_PATH + '/Ports/NIC.Slot.1-1'
         mock_port.ethernet = mock_ethernet
 
         mock_adapter = mock.Mock()
         mock_adapter.identity = 'NIC.Slot.1'
         mock_adapter.ports.get_members.return_value = [mock_port]
+        mock_adapter.network_device_functions.get_members.return_value = [
+            _network_device_function('NIC.Slot.1-1-1', 'NIC.Slot.1-1')]
 
         mock_chassis.network_adapters.get_members.return_value = [mock_adapter]
         system_mock.chassis = [mock_chassis]
@@ -1176,6 +1202,8 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         mock_iface.identity = 'NIC.Slot.1-1-1'
         mock_iface.mac_address = '14:23:F3:F5:3B:A0'
         system_mock.ethernet_interfaces.get_members.return_value = [mock_iface]
+        system_mock.ethernet_interfaces.members_identities = [
+            _SYSTEM_PATH + '/EthernetInterfaces/NIC.Slot.1-1-1']
 
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
@@ -1187,12 +1215,11 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         self.assertIn('parsed_lldp', inventory['plugin_data'])
         parsed_lldp = inventory['plugin_data']['parsed_lldp']
 
-        # Should have one interface with LLDP data using Port ID as name
-        self.assertEqual(1, len(parsed_lldp))
-        self.assertIn('NIC.Slot.1-1', parsed_lldp)
+        # Should have the LLDP data for the interface using the port
+        self.assertEqual(['NIC.Slot.1-1-1'], list(parsed_lldp))
 
         # Verify parsed LLDP format
-        lldp_data = parsed_lldp['NIC.Slot.1-1']
+        lldp_data = parsed_lldp['NIC.Slot.1-1-1']
         self.assertIsInstance(lldp_data, dict)
         self.assertIn('switch_chassis_id', lldp_data)
         self.assertIn('switch_port_id', lldp_data)
@@ -1206,6 +1233,95 @@ class RedfishInspectTestCase(db_base.DbTestCase):
                          lldp_data['switch_system_name'])
         self.assertEqual('Cisco IOS XE',
                          lldp_data['switch_system_description'])
+
+    def _setup_lldp_ports(self, system_mock, ports, functions,
+                          interface_ids):
+        """Set up a NIC.Slot.1 adapter with LLDP data on its ports.
+
+        :param ports: Dict mapping port identities to switch port IDs.
+        :param functions: List of network device function mocks.
+        :param interface_ids: List of ethernet interface identities.
+        """
+        port_mocks = []
+        for port_id, switch_port_id in ports.items():
+            lldp = {'ChassisId': '00:00:5e:00:53:01',
+                    'PortId': switch_port_id}
+            port_mock = mock.Mock(identity=port_id,
+                                  path=_ADAPTER_PATH + '/Ports/' + port_id)
+            port_mock.ethernet.lldp_receive = lldp
+            port_mocks.append(port_mock)
+
+        adapter = mock.Mock(identity='NIC.Slot.1')
+        adapter.ports.get_members.return_value = port_mocks
+        adapter.network_device_functions.get_members.return_value = functions
+        chassis = mock.Mock(identity='System.Embedded.1')
+        chassis.network_adapters.get_members.return_value = [adapter]
+        system_mock.chassis = [chassis]
+        system_mock.ethernet_interfaces.members_identities = [
+            _SYSTEM_PATH + '/EthernetInterfaces/' + iface
+            for iface in interface_ids]
+
+    def _collect_lldp(self, system_mock):
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            return task.driver.inspect._collect_lldp_data(task, system_mock)
+
+    def test_collect_lldp_data_partitioned_interfaces(self):
+        # Laid out like a Dell iDRAC9, where both the port and its
+        # partition are reported as ethernet interfaces.
+        system_mock = mock.Mock()
+        self._setup_lldp_ports(
+            system_mock, {'NIC.Slot.1-1': 'Ethernet1/1'},
+            [_network_device_function('NIC.Slot.1-1', 'NIC.Slot.1-1'),
+             _network_device_function('NIC.Slot.1-1-1', 'NIC.Slot.1-1')],
+            ['NIC.Slot.1-1', 'NIC.Slot.1-1-1'])
+
+        lldp = {'switch_chassis_id': '00:00:5e:00:53:01',
+                'switch_port_id': 'Ethernet1/1'}
+        self.assertEqual({'NIC.Slot.1-1': lldp, 'NIC.Slot.1-1-1': lldp},
+                         self._collect_lldp(system_mock))
+
+    def test_collect_lldp_data_linked_interfaces(self):
+        # The function links to ethernet interfaces of different names
+        system_mock = mock.Mock()
+        self._setup_lldp_ports(
+            system_mock, {'1': 'Ethernet1/1', '2': 'Ethernet1/2'},
+            [_network_device_function('1', '1', interface_ids=['eth0']),
+             _network_device_function('2', '2', interface_ids=['eth1'])],
+            ['eth0', 'eth1'])
+
+        self.assertEqual(
+            {'eth0': {'switch_chassis_id': '00:00:5e:00:53:01',
+                      'switch_port_id': 'Ethernet1/1'},
+             'eth1': {'switch_chassis_id': '00:00:5e:00:53:01',
+                      'switch_port_id': 'Ethernet1/2'}},
+            self._collect_lldp(system_mock))
+
+    def test_collect_lldp_data_without_links(self):
+        # Without network device functions, the port identity is used
+        # when an ethernet interface has the same identity.
+        system_mock = mock.Mock()
+        self._setup_lldp_ports(
+            system_mock, {'NIC.1': 'Ethernet1/1', 'Port.2': 'Ethernet1/2'},
+            [], ['NIC.1', 'NIC.2'])
+
+        self.assertEqual(
+            {'NIC.1': {'switch_chassis_id': '00:00:5e:00:53:01',
+                       'switch_port_id': 'Ethernet1/1'}},
+            self._collect_lldp(system_mock))
+
+    def test_collect_lldp_data_unknown_interfaces(self):
+        # If the ethernet interfaces cannot be listed, keep the port names
+        system_mock = mock.Mock()
+        self._setup_lldp_ports(
+            system_mock, {'NIC.1': 'Ethernet1/1'}, [], [])
+        type(system_mock.ethernet_interfaces).members_identities = (
+            mock.PropertyMock(side_effect=sushy.exceptions.SushyError))
+
+        self.assertEqual(
+            {'NIC.1': {'switch_chassis_id': '00:00:5e:00:53:01',
+                       'switch_port_id': 'Ethernet1/1'}},
+            self._collect_lldp(system_mock))
 
     @mock.patch.object(redfish_utils, 'get_enabled_macs', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -1227,6 +1343,7 @@ class RedfishInspectTestCase(db_base.DbTestCase):
 
         mock_adapter = mock.Mock()
         mock_adapter.ports.get_members.return_value = [mock_port]
+        mock_adapter.network_device_functions.get_members.return_value = []
 
         mock_chassis.network_adapters.get_members.return_value = [mock_adapter]
         system_mock.chassis = [mock_chassis]

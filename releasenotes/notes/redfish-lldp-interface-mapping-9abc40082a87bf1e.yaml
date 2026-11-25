@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    Fixes LLDP data collected by the ``redfish`` and ``idrac-redfish``
+    inspection interfaces not matching the inspected network interfaces when
+    the BMC names the ethernet interfaces differently from the ports the LLDP
+    data is reported for. For example, iDRAC10 reports LLDP data for the port
+    ``NIC.Slot.1-1`` while the interface is ``NIC.Slot.1-1-1``, and iDRAC9
+    reports switch connections for ``NIC.Slot.1-1-1`` while the interface
+    with the MAC address is ``NIC.Slot.1-1``. LLDP data is now reported for
+    every ethernet interface linked to the port through its network device
+    function, and LLDP data not belonging to any ethernet interface, such as
+    the iDRAC's own port, is ignored.
