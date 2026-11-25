@@ -72,6 +72,29 @@ def _parse_pci_number(value):
     return int(value, 16)
 
 
+def _get_pci_address(pcie_function):
+    """Build the PCI address of a PCIe function.
+
+    :param pcie_function: Sushy PCIeFunction object.
+    :returns: The PCI address in the ``SSSS:BB:DD.F`` format the agent uses,
+        e.g. ``0000:c1:00.0``, or None if the BMC does not report it.
+    """
+    if (pcie_function.bus_number is None
+            or pcie_function.device_number is None
+            or pcie_function.function_number is None):
+        return None
+    try:
+        segment = _parse_pci_number(pcie_function.segment_number or 0)
+        return (f"{segment:04x}:"
+                f"{_parse_pci_number(pcie_function.bus_number):02x}:"
+                f"{_parse_pci_number(pcie_function.device_number):02x}."
+                f"{_parse_pci_number(pcie_function.function_number):x}")
+    except (ValueError, TypeError) as exc:
+        LOG.debug("Malformed PCI address information in PCIeFunction "
+                  "%s: %s", pcie_function.identity, exc)
+        return None
+
+
 class RedfishInspect(base.InspectInterface):
 
     def __init__(self):
@@ -636,20 +659,9 @@ class RedfishInspect(base.InspectInterface):
         if pcie_function.subsystem_vendor_id:
             pci_info['subsystem_vendor'] = pcie_function.subsystem_vendor_id
 
-        if (pcie_function.bus_number is not None
-                and pcie_function.device_number is not None
-                and pcie_function.function_number is not None):
-            try:
-                segment = _parse_pci_number(
-                    pcie_function.segment_number or 0)
-                pci_info['pci_address'] = (
-                    f"{segment:04x}:"
-                    f"{_parse_pci_number(pcie_function.bus_number):02x}:"
-                    f"{_parse_pci_number(pcie_function.device_number):02x}."
-                    f"{_parse_pci_number(pcie_function.function_number):x}")
-            except (ValueError, TypeError) as exc:
-                LOG.debug("Malformed PCI address information in PCIeFunction "
-                          "%s: %s", pcie_function.identity, exc)
+        pci_address = _get_pci_address(pcie_function)
+        if pci_address:
+            pci_info['pci_address'] = pci_address
 
         if not pci_info:
             return
@@ -668,7 +680,10 @@ class RedfishInspect(base.InspectInterface):
         """
         info = {}
         # Naming them same as in IPA for compatibility
-        # IPA  has extra bus and numa_node_id which BMC doesn't have.
+        # IPA has an extra numa_node_id which BMC doesn't have.
+        pci_address = _get_pci_address(function)
+        if pci_address:
+            info['bus'] = pci_address
         if function.device_class is not None:
             info['class'] = function.device_class.value
         if function.device_id is not None:

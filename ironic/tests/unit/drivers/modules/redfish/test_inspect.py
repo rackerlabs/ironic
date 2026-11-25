@@ -1050,6 +1050,8 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         self.assertEqual('0x000a', nic1['subsystem'])
         self.assertEqual('0x8086', nic1['subsystem_vendor'])
         self.assertEqual('0000:c1:00.0', nic1['pci_address'])
+        self.assertEqual(
+            '0000:c1:00.0', inventory['inventory']['pci_devices'][0]['bus'])
 
         nic2 = next(i for i in interfaces
                     if i['name'] == 'NIC.Integrated.2-1')
@@ -1097,6 +1099,8 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         nic1 = next(i for i in interfaces
                     if i['name'] == 'NIC.Integrated.1-1')
         self.assertEqual('0001:c1:1f.3', nic1['pci_address'])
+        self.assertEqual(
+            '0001:c1:1f.3', inventory['inventory']['pci_devices'][0]['bus'])
 
     @mock.patch.object(redfish_utils, 'get_enabled_macs', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)

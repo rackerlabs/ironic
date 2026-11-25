@@ -1,0 +1,6 @@
+---
+features:
+  - |
+    Redfish inspection now reports the PCI address of each entry of the
+    ``pci_devices`` inventory in the ``bus`` field, e.g. ``0000:c1:00.0``,
+    matching the agent inspection interface, when the BMC provides it.
