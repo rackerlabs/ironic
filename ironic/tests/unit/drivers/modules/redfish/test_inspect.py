@@ -301,6 +301,33 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         self.assertEqual(expected_pcie_devices,
                          inventory['inventory']['pci_devices'])
 
+    @mock.patch.object(inspect_utils, 'run_inspection_hooks', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_inspect_hardware_keeps_hook_properties(self, mock_get_system,
+                                                    mock_run_hooks):
+        def fake_hooks(task, inventory, plugin_data, hooks, _):
+            # Hooks save the node, after which further properties are set
+            task.node.set_property('cpu_arch', 'x86_64')
+            task.node.save()
+            task.node.set_property('accelerators', [{'type': 'GPU'}])
+            task.node.save()
+
+        mock_run_hooks.side_effect = fake_hooks
+        self.init_system_mock(mock_get_system.return_value)
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            task.driver.inspect.inspect_hardware(task)
+
+        self.node.refresh()
+        expected_properties = {
+            'accelerators': [{'type': 'GPU'}],
+            'capabilities': 'boot_mode:uefi',
+            'cpu_arch': 'x86_64',
+            'local_gb': 3, 'memory_mb': 2048,
+        }
+        self.assertEqual(expected_properties, self.node.properties)
+
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_inspect_hardware_fail_missing_cpu_arch(self, mock_get_system):
         system_mock = self.init_system_mock(mock_get_system.return_value)

@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Fixes the ``redfish`` inspection interface discarding node properties
+    set by inspection hooks and inspection rules, such as the
+    ``accelerators`` property set by the ``accelerators`` hook, when a hook
+    saved the node before they were set.

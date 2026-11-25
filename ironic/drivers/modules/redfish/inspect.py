@@ -225,6 +225,12 @@ class RedfishInspect(base.InspectInterface):
                      'node %(node)s',
                      {'count': len(lldp_raw_data), 'node': task.node.uuid})
 
+        # NOTE(cardoe): Set the properties on the node before running the
+        #               hooks. Saving the node replaces its properties dict,
+        #               so applying inspected_properties after the hooks
+        #               would discard properties set by hooks and rules.
+        task.node.properties = inspected_properties
+
         inspect_utils.run_inspection_hooks(task, inventory, plugin_data,
                                            self.hooks, None)
         inspect_utils.store_inspection_data(task.node,
@@ -234,7 +240,7 @@ class RedfishInspect(base.InspectInterface):
         engine.apply_rules(task, inventory, plugin_data, 'main')
 
         valid_keys = self.ESSENTIAL_PROPERTIES
-        missing_keys = valid_keys - set(inspected_properties)
+        missing_keys = valid_keys - set(task.node.properties)
         if missing_keys:
             error = (_('Failed to discover the following properties: '
                        '%(missing_keys)s on node %(node)s') %
@@ -242,10 +248,9 @@ class RedfishInspect(base.InspectInterface):
                       'node': task.node.uuid})
             raise exception.HardwareInspectionFailure(error=error)
 
-        task.node.properties = inspected_properties
         task.node.save()
         LOG.debug("Node properties for %(node)s are updated as "
-                  "%(properties)s", {'properties': inspected_properties,
+                  "%(properties)s", {'properties': task.node.properties,
                                      'node': task.node.uuid})
 
         return states.MANAGEABLE
