@@ -118,6 +118,42 @@ class AcceleratorsTestCase(db_base.DbTestCase):
                          'pci_address': '0000:00:01.2'}]
             self.assertEqual(result, expected)
 
+    def test_accelerators_without_bus_or_ids(self):
+        # A BMC may not report the PCI address or the IDs of a device
+        self.inventory = {
+            'pci_devices': [
+                {'vendor_id': '10de', 'device_id': '1df6',
+                 'product_id': '1df6', 'class': 'DisplayController'},
+                {'device_id': '1eb8', 'class': 'Bridge'},
+            ],
+        }
+        self.plugin_data = {}
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.accelerators_hook.__call__(task, self.inventory,
+                                            self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('accelerators', [])
+            expected = [{'vendor_id': '10de',
+                         'device_id': '1df6',
+                         'type': 'GPU',
+                         'device_info': 'NVIDIA Corporation GV100GL',
+                         'pci_address': None}]
+            self.assertEqual(expected, result)
+
+    def test_accelerators_prefer_device_id(self):
+        self.plugin_data = {'pci_devices': [
+            {'vendor_id': '10de', 'device_id': '1df6',
+             'product_id': '1eb8', 'bus': '0000:00:02.0'},
+        ]}
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.accelerators_hook.__call__(task, self.inventory,
+                                            self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('accelerators', [])
+            self.assertEqual(1, len(result))
+            self.assertEqual('1df6', result[0]['device_id'])
+            self.assertEqual('0000:00:02.0', result[0]['pci_address'])
+
     def test_accelerators_cleanup(self):
         with task_manager.acquire(self.context, self.node.id) as task:
             prop = self.node.properties

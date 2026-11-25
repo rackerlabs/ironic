@@ -143,11 +143,14 @@ class AcceleratorsHook(base.InspectionHook):
         accelerators = []
         found_traits = set()
         for pci_dev in pci_devices:
-            known_device = index.get((pci_dev['vendor_id'],
-                                      pci_dev['product_id']))
+            vendor_id = pci_dev.get('vendor_id')
+            # NOTE(cardoe): product_id is the name inherited from IPA,
+            #               prefer device_id when it is reported.
+            device_id = pci_dev.get('device_id') or pci_dev.get('product_id')
+            known_device = index.get((vendor_id, device_id))
             if known_device:
                 accelerator = known_device.copy()
-                accelerator.update(pci_address=pci_dev['bus'])
+                accelerator.update(pci_address=pci_dev.get('bus'))
                 accelerators.append(accelerator)
                 # Track the trait for this device if one is defined,
                 # otherwise warn: the trait can be added by the operator
@@ -162,7 +165,7 @@ class AcceleratorsHook(base.InspectionHook):
                         'configuration file. Add a trait to the file to '
                         'have it recorded on the node.',
                         known_device.get('device_info'),
-                        pci_dev['vendor_id'], pci_dev['product_id'],
+                        vendor_id, device_id,
                         task.node.uuid)
 
         if accelerators:

@@ -1,0 +1,9 @@
+---
+fixes:
+  - |
+    The ``accelerators`` inspection hook now prefers the ``device_id`` of a
+    PCI device over the deprecated ``product_id`` when it is reported. The
+    hook also no longer fails on devices without a PCI address or without
+    vendor or device IDs, as reported by some BMCs to the ``redfish``
+    inspection interface. Accelerators found without a PCI address have a
+    ``pci_address`` of ``None``.
