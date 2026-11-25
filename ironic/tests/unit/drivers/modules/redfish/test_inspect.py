@@ -286,15 +286,15 @@ class RedfishInspectTestCase(db_base.DbTestCase):
 
         expected_pcie_devices = [
             {'class': 'NetworkController',
-             'product_id': '0x16d7',
-             'vendor_id': '0x14e4',
-             'subsystem_id': '0x1402',
-             'subsystem_vendor_id': '0x14e4',
-             'revision': '0x01'},
+             'product_id': '16d7',
+             'vendor_id': '14e4',
+             'subsystem_id': '1402',
+             'subsystem_vendor_id': '14e4',
+             'revision': '01'},
             {'class': 'MassStorageController',
-             'product_id': '0x1234',
-             'vendor_id': '0x1000',
-             'revision': '0x02'}
+             'product_id': '1234',
+             'vendor_id': '1000',
+             'revision': '02'}
         ]
         self.assertEqual(expected_pcie_devices,
                          inventory['inventory']['pci_devices'])
@@ -973,7 +973,7 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         # Create a PCIe function with partial data, some fields None
         mock_pcie_function = mock.Mock()
         mock_pcie_function.device_class = sushy.DeviceClass.NETWORK_CONTROLLER
-        mock_pcie_function.device_id = '0x16d7'
+        mock_pcie_function.device_id = '0x16D7'
         mock_pcie_function.vendor_id = None
         mock_pcie_function.subsystem_id = '0x1402'
         mock_pcie_function.subsystem_vendor_id = None
@@ -997,9 +997,9 @@ class RedfishInspectTestCase(db_base.DbTestCase):
                                                       self.context)
         expected_pcie_devices = [
             {'class': 'NetworkController',
-             'product_id': '0x16d7',
-             'subsystem_id': '0x1402',
-             'revision': '0x01'}
+             'product_id': '16d7',
+             'subsystem_id': '1402',
+             'revision': '01'}
         ]
         self.assertEqual(expected_pcie_devices,
                          inventory['inventory']['pci_devices'])

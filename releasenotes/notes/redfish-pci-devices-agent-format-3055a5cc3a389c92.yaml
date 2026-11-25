@@ -1,0 +1,16 @@
+---
+fixes:
+  - |
+    For better compatibility with the agent inspection interface, the
+    ``redfish`` inspection interface now reports the ``vendor_id``,
+    ``product_id``, ``subsystem_id``, ``subsystem_vendor_id`` and
+    ``revision`` fields of ``pci_devices`` in lowercase hex without a
+    ``0x`` prefix, e.g. ``10de`` instead of ``0x10DE``. This allows
+    inspection hooks such as ``accelerators`` and ``pci-devices`` to match
+    devices found by Redfish inspection.
+upgrade:
+  - |
+    Inspection rules matching the ``pci_devices`` IDs reported by the
+    ``redfish`` inspection interface must be updated to the new format
+    without a ``0x`` prefix. Previously stored inspection data is not
+    changed.

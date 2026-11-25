@@ -49,6 +49,15 @@ BOOT_MODE_MAP = {
 }
 
 
+def _normalize_pci_hex(value):
+    """Format a Redfish PCI hex value the way the agent reports it.
+
+    :param value: A hex string, e.g. ``0x10DE``.
+    :returns: The value in lowercase without a ``0x`` prefix, e.g. ``10de``.
+    """
+    return value.lower().removeprefix('0x')
+
+
 class RedfishInspect(base.InspectInterface):
 
     def __init__(self):
@@ -648,15 +657,16 @@ class RedfishInspect(base.InspectInterface):
         if function.device_class is not None:
             info['class'] = function.device_class.value
         if function.device_id is not None:
-            info['product_id'] = function.device_id
+            info['product_id'] = _normalize_pci_hex(function.device_id)
         if function.vendor_id is not None:
-            info['vendor_id'] = function.vendor_id
+            info['vendor_id'] = _normalize_pci_hex(function.vendor_id)
         if function.subsystem_id is not None:
-            info['subsystem_id'] = function.subsystem_id
+            info['subsystem_id'] = _normalize_pci_hex(function.subsystem_id)
         if function.subsystem_vendor_id is not None:
-            info['subsystem_vendor_id'] = function.subsystem_vendor_id
+            info['subsystem_vendor_id'] = _normalize_pci_hex(
+                function.subsystem_vendor_id)
         if function.revision_id is not None:
-            info['revision'] = function.revision_id
+            info['revision'] = _normalize_pci_hex(function.revision_id)
         return info
 
     def _collect_lldp_data(self, task, system):
