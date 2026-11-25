@@ -58,6 +58,20 @@ def _normalize_pci_hex(value):
     return value.lower().removeprefix('0x')
 
 
+def _parse_pci_number(value):
+    """Parse a PCI segment, bus, device or function number.
+
+    BMCs report these either as integers or as hex strings, e.g. ``0x44``.
+
+    :param value: An integer or a hex string with or without a ``0x`` prefix.
+    :returns: The value as an integer.
+    :raises: ValueError or TypeError if the value cannot be parsed.
+    """
+    if isinstance(value, int):
+        return value
+    return int(value, 16)
+
+
 class RedfishInspect(base.InspectInterface):
 
     def __init__(self):
@@ -626,12 +640,13 @@ class RedfishInspect(base.InspectInterface):
                 and pcie_function.device_number is not None
                 and pcie_function.function_number is not None):
             try:
-                segment = int(pcie_function.segment_number or 0)
+                segment = _parse_pci_number(
+                    pcie_function.segment_number or 0)
                 pci_info['pci_address'] = (
                     f"{segment:04x}:"
-                    f"{int(pcie_function.bus_number):02x}:"
-                    f"{int(pcie_function.device_number):02x}."
-                    f"{int(pcie_function.function_number):x}")
+                    f"{_parse_pci_number(pcie_function.bus_number):02x}:"
+                    f"{_parse_pci_number(pcie_function.device_number):02x}."
+                    f"{_parse_pci_number(pcie_function.function_number):x}")
             except (ValueError, TypeError) as exc:
                 LOG.debug("Malformed PCI address information in PCIeFunction "
                           "%s: %s", pcie_function.identity, exc)

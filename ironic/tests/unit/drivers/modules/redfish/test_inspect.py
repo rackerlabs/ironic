@@ -1060,6 +1060,46 @@ class RedfishInspectTestCase(db_base.DbTestCase):
 
     @mock.patch.object(redfish_utils, 'get_enabled_macs', autospec=True)
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
+    def test_inspect_hardware_nic_pci_with_hex_string_address(
+            self, mock_get_system, mock_get_enabled_macs):
+        # Some BMCs, e.g. Dell iDRAC, report the address parts as hex strings
+        system_mock = self.init_system_mock(mock_get_system.return_value)
+        mock_pcie_function = mock.Mock()
+        mock_pcie_function.device_class = sushy.DeviceClass.NETWORK_CONTROLLER
+        mock_pcie_function.device_id = '0x1593'
+        mock_pcie_function.vendor_id = '0x8086'
+        mock_pcie_function.subsystem_id = None
+        mock_pcie_function.subsystem_vendor_id = None
+        mock_pcie_function.revision_id = None
+        mock_pcie_function.bus_number = '0xC1'
+        mock_pcie_function.device_number = '0x1f'
+        mock_pcie_function.function_number = '0x3'
+        mock_pcie_function.segment_number = '0x0001'
+        mock_pcie_function.links = {
+            'EthernetInterfaces': [
+                {'@odata.id': '/redfish/v1/Systems/1/EthernetInterfaces/'
+                              'NIC.Integrated.1-1'}
+            ]
+        }
+
+        mock_pcie_device = mock.Mock()
+        mock_pcie_device.pcie_functions.get_members.return_value = [
+            mock_pcie_function]
+        system_mock.pcie_devices.get_members.return_value = [mock_pcie_device]
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            task.driver.inspect.inspect_hardware(task)
+
+        inventory = inspect_utils.get_inspection_data(self.node,
+                                                      self.context)
+        interfaces = inventory['inventory']['interfaces']
+        nic1 = next(i for i in interfaces
+                    if i['name'] == 'NIC.Integrated.1-1')
+        self.assertEqual('0001:c1:1f.3', nic1['pci_address'])
+
+    @mock.patch.object(redfish_utils, 'get_enabled_macs', autospec=True)
+    @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_collect_lldp_data_with_complete_lldp(
             self, mock_get_system, mock_get_enabled_macs):
         """Test LLDP collection with complete LLDP data"""
