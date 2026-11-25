@@ -50,6 +50,41 @@ BOOT_MODE_MAP = {
     sushy.BOOT_SOURCE_MODE_BIOS: boot_modes.LEGACY_BIOS
 }
 
+# LLDP chassis and port ID subtypes (IEEE 802.1AB) whose values are
+# alphanumeric strings rather than addresses or binary data.
+LLDP_TEXT_ID_SUBTYPES = frozenset([
+    'ChassisComp', 'IfAlias', 'IfName', 'LocalAssign', 'PortComp',
+])
+
+
+def _decode_lldp_id(value, subtype):
+    """Decode an LLDP chassis or port ID reported by Redfish.
+
+    The Redfish schema defines the chassis and port IDs as colon delimited
+    hexadecimal octets, e.g. ``45:74:68:31`` for the interface name
+    ``Eth1``. Some BMCs report them this way while others report the
+    string itself. Decode the octets of the alphanumeric subtypes to match
+    what the agent reports.
+
+    :param value: The chassis or port ID.
+    :param subtype: The ID subtype, as a sushy IEEE802IdSubtype or string.
+    :returns: The decoded ID, or the value unchanged if it is not a hex
+        encoded string.
+    """
+    subtype = getattr(subtype, 'value', subtype)
+    if subtype not in LLDP_TEXT_ID_SUBTYPES:
+        return value
+
+    octets = value.split(':')
+    # A single octet cannot be told apart from a two character string.
+    if len(octets) < 2 or any(len(octet) != 2 for octet in octets):
+        return value
+    try:
+        decoded = bytes.fromhex(''.join(octets)).decode('utf-8')
+    except ValueError:
+        return value
+    return decoded if decoded.isprintable() else value
+
 
 def _normalize_pci_hex(value):
     """Format a Redfish PCI hex value the way the agent reports it.
@@ -918,12 +953,18 @@ class RedfishInspect(base.InspectInterface):
         chassis_id = self._get_lldp_value(lldp_receive, 'chassis_id',
                                           'ChassisId')
         if chassis_id:
-            lldp_dict['switch_chassis_id'] = chassis_id
+            lldp_dict['switch_chassis_id'] = _decode_lldp_id(
+                chassis_id,
+                self._get_lldp_value(lldp_receive, 'chassis_id_subtype',
+                                     'ChassisIdSubtype'))
 
         # Port ID
         port_id = self._get_lldp_value(lldp_receive, 'port_id', 'PortId')
         if port_id:
-            lldp_dict['switch_port_id'] = port_id
+            lldp_dict['switch_port_id'] = _decode_lldp_id(
+                port_id,
+                self._get_lldp_value(lldp_receive, 'port_id_subtype',
+                                     'PortIdSubtype'))
 
         # System Name
         system_name = self._get_lldp_value(lldp_receive, 'system_name',

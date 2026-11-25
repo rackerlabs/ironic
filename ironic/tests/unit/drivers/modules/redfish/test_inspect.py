@@ -26,6 +26,7 @@ from ironic.drivers.modules import inspect_utils
 from ironic.drivers.modules.redfish import inspect
 from ironic.drivers.modules.redfish import utils as redfish_utils
 from ironic import objects
+from ironic.tests import base
 from ironic.tests.unit.db import base as db_base
 from ironic.tests.unit.db import utils as db_utils
 from ironic.tests.unit.objects import utils as obj_utils
@@ -1442,6 +1443,39 @@ class RedfishInspectTestCase(db_base.DbTestCase):
         self.assertEqual('aa:bb:cc:dd:ee:ff', lldp_dict['switch_chassis_id'])
         self.assertEqual('port-1', lldp_dict['switch_port_id'])
 
+    def test_convert_lldp_receive_to_dict_hex_encoded_ids(self):
+        # Dell iDRAC10 reports the port ID as hex octets per the schema
+        mock_lldp = mock.Mock(spec=['chassis_id', 'chassis_id_subtype',
+                                    'port_id', 'port_id_subtype',
+                                    'management_vlan_id'])
+        mock_lldp.chassis_id = '00:00:5e:00:53:01'
+        mock_lldp.chassis_id_subtype = sushy.IEEE802IdSubtype.MAC_ADDR
+        mock_lldp.port_id = '45:74:68:65:72:6E:65:74:31:2F:31'
+        mock_lldp.port_id_subtype = sushy.IEEE802IdSubtype.IF_NAME
+        mock_lldp.management_vlan_id = 0
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            lldp_dict = task.driver.inspect._convert_lldp_receive_to_dict(
+                mock_lldp)
+
+        self.assertEqual({'switch_chassis_id': '00:00:5e:00:53:01',
+                          'switch_port_id': 'Ethernet1/1'}, lldp_dict)
+
+    def test_convert_lldp_receive_to_dict_hex_encoded_ids_dict(self):
+        lldp = {'ChassisId': '73:77:31',
+                'ChassisIdSubtype': 'LocalAssign',
+                'PortId': '45:74:68:65:72:6E:65:74:31:2F:31',
+                'PortIdSubtype': 'IfName'}
+
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=True) as task:
+            lldp_dict = task.driver.inspect._convert_lldp_receive_to_dict(
+                lldp)
+
+        self.assertEqual({'switch_chassis_id': 'sw1',
+                          'switch_port_id': 'Ethernet1/1'}, lldp_dict)
+
     def test_get_storage_controllers(self):
         """Test _get_storage_controllers collects all storage members."""
         mock_drive = mock.Mock()
@@ -1736,6 +1770,33 @@ class RedfishInspectTestCase(db_base.DbTestCase):
                                                       self.context)
         self.assertIn('storage_controllers',
                       inventory['inventory'])
+
+
+class DecodeLLDPIdTestCase(base.TestCase):
+
+    def test_decode_text_subtypes(self):
+        for subtype in ('ChassisComp', 'IfAlias', 'IfName', 'LocalAssign',
+                        'PortComp'):
+            self.assertEqual(
+                'Ethernet1/1',
+                inspect._decode_lldp_id('45:74:68:65:72:6e:65:74:31:2f:31',
+                                        subtype))
+
+    def test_address_subtypes_unchanged(self):
+        for subtype in ('MacAddr', 'NetworkAddr', 'AgentId', None,
+                        sushy.IEEE802IdSubtype.MAC_ADDR):
+            self.assertEqual(
+                '45:74:68:31',
+                inspect._decode_lldp_id('45:74:68:31', subtype))
+
+    def test_plain_text_unchanged(self):
+        for value in ('Ethernet1/1', 'ab:cd:efg', '31'):
+            self.assertEqual(value, inspect._decode_lldp_id(value, 'IfName'))
+
+    def test_undecodable_unchanged(self):
+        # Invalid UTF-8 and non-printable characters
+        for value in ('ff:fe', '00:01', 'zz:zz'):
+            self.assertEqual(value, inspect._decode_lldp_id(value, 'IfName'))
 
 
 class ContinueInspectionTestCase(db_base.DbTestCase):

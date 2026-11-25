@@ -1,0 +1,9 @@
+---
+fixes:
+  - |
+    Fixes the ``redfish`` inspect interface reporting LLDP chassis and port
+    IDs as hexadecimal octets, e.g. ``45:74:68:65:72:6E:65:74:31:2F:31``
+    instead of ``Ethernet1/1``, for BMCs such as Dell iDRAC10 which encode
+    them as described by the Redfish schema. IDs of the interface name,
+    interface alias, component and locally assigned subtypes are now
+    decoded to strings, matching the data reported by the agent.
