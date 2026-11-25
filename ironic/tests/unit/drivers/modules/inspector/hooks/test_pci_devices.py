@@ -10,10 +10,13 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from unittest import mock
+
 from ironic.conductor import task_manager
 from ironic.conf import CONF
 from ironic.drivers.modules.inspector.hooks import pci_devices as \
     pci_devices_hook
+from ironic.tests import base
 from ironic.tests.unit.db import base as db_base
 from ironic.tests.unit.objects import utils as obj_utils
 
@@ -111,3 +114,31 @@ class PciDevicesTestCase(db_base.DbTestCase):
             self.node.refresh()
             result = self.node.properties.get('capabilities', '')
             self.assertEqual('OneBZeroC:1', result)
+
+
+class ParsePciAliasEntriesTestCase(base.TestCase):
+
+    def test_parse_device_id(self):
+        CONF.set_override('pci_device_alias', [
+            '{"vendor_id": "8086", "device_id": "2922", "name": "dev1"}',
+        ], group='inspector')
+        self.assertEqual({('8086', '2922'): 'dev1'},
+                         pci_devices_hook._parse_pci_alias_entries())
+
+    @mock.patch.object(pci_devices_hook.LOG, 'warning', autospec=True)
+    def test_parse_deprecated_product_id(self, mock_warn):
+        CONF.set_override('pci_device_alias', [
+            '{"vendor_id": "8086", "product_id": "2922", "name": "dev1"}',
+        ], group='inspector')
+        self.assertEqual({('8086', '2922'): 'dev1'},
+                         pci_devices_hook._parse_pci_alias_entries())
+        mock_warn.assert_called_once()
+
+    @mock.patch.object(pci_devices_hook.LOG, 'error', autospec=True)
+    def test_parse_device_id_and_product_id(self, mock_error):
+        CONF.set_override('pci_device_alias', [
+            '{"vendor_id": "8086", "device_id": "2922", '
+            '"product_id": "2922", "name": "dev1"}',
+        ], group='inspector')
+        self.assertEqual({}, pci_devices_hook._parse_pci_alias_entries())
+        mock_error.assert_called_once()

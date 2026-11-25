@@ -33,15 +33,21 @@ def _parse_pci_alias_entries():
     for pci_alias_entry in CONF.inspector.pci_device_alias:
         try:
             parsed_entry = json.loads(pci_alias_entry)
-            if set(parsed_entry) != {'vendor_id', 'product_id', 'name'}:
+            if ('product_id' in parsed_entry
+                    and 'device_id' not in parsed_entry):
+                LOG.warning('The "product_id" key of the "pci_device_alias" '
+                            'entry %s is deprecated, use "device_id" '
+                            'instead.', pci_alias_entry)
+                parsed_entry['device_id'] = parsed_entry.pop('product_id')
+            if set(parsed_entry) != {'vendor_id', 'device_id', 'name'}:
                 raise KeyError('The "pci_device_alias" entry should contain '
-                               'exactly the "vendor_id", "product_id" and '
+                               'exactly the "vendor_id", "device_id" and '
                                '"name" keys.')
             parsed_pci_devices.append(parsed_entry)
         except (ValueError, KeyError) as exc:
             LOG.error("Error parsing 'pci_device_alias' option: %s", exc)
 
-    return {(dev['vendor_id'], dev['product_id']): dev['name']
+    return {(dev['vendor_id'], dev['device_id']): dev['name']
             for dev in parsed_pci_devices}
 
 

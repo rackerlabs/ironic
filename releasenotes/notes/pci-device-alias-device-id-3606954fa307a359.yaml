@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    Entries of the ``[inspector]pci_device_alias`` option now accept a
+    ``device_id`` key to identify the PCI device, matching the field reported
+    in the ``pci_devices`` inspection data.
+deprecations:
+  - |
+    The ``product_id`` key of ``[inspector]pci_device_alias`` entries is
+    deprecated in favor of ``device_id``. It is still accepted, with a
+    warning, but will be removed in a future release. Entries containing
+    both keys are rejected.
