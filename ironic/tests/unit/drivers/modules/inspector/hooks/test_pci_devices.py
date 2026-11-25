@@ -83,3 +83,31 @@ class PciDevicesTestCase(db_base.DbTestCase):
             result = self.node.properties.get('capabilities', '')
             expected = 'EightyTwentyTwo:1,EightyEighteen:1,OneBZeroC:2'
             self.assertEqual(expected, result)
+
+    def test_pci_devices_prefer_device_id(self):
+        self.plugin_data = {'pci_devices': [
+            {'vendor_id': '8086', 'device_id': '2922', 'product_id': '2930'},
+            {'vendor_id': '8086', 'product_id': '2918'},
+        ]}
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.pci_devices_hook.__call__(task, self.inventory,
+                                           self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('capabilities', '')
+            expected = 'EightyTwentyTwo:1,EightyEighteen:1'
+            self.assertEqual(expected, result)
+
+    def test_pci_devices_missing_ids(self):
+        # A BMC may not report the IDs of a device
+        self.inventory = {'pci_devices': [
+            {'device_id': '2922', 'class': 'Bridge'},
+            {'vendor_id': '8086', 'class': 'Bridge'},
+            {'vendor_id': '1b36', 'device_id': '000c'},
+        ]}
+        self.plugin_data = {}
+        with task_manager.acquire(self.context, self.node.id) as task:
+            self.pci_devices_hook.__call__(task, self.inventory,
+                                           self.plugin_data)
+            self.node.refresh()
+            result = self.node.properties.get('capabilities', '')
+            self.assertEqual('OneBZeroC:1', result)

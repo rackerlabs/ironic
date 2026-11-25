@@ -53,10 +53,13 @@ class PciDevicesHook(base.InspectionHook):
     _aliases = _parse_pci_alias_entries()
 
     def _found_pci_devices_count(self, found_pci_devices):
-        return collections.Counter([(dev['vendor_id'], dev['product_id'])
-                                    for dev in found_pci_devices
-                                    if (dev['vendor_id'], dev['product_id'])
-                                    in self._aliases])
+        # NOTE(cardoe): product_id is the name inherited from IPA,
+        #               prefer device_id when it is reported.
+        id_pairs = ((dev.get('vendor_id'),
+                     dev.get('device_id') or dev.get('product_id'))
+                    for dev in found_pci_devices)
+        return collections.Counter(id_pair for id_pair in id_pairs
+                                   if id_pair in self._aliases)
 
     def __call__(self, task, inventory, plugin_data):
         """Update node capabilities with PCI devices."""
